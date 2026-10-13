@@ -1,0 +1,136 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import { paths } from "./paths.js";
+
+export const RoutingMode = z.enum(["off", "annotate", "enforce", "auto"]);
+export type RoutingMode = z.infer<typeof RoutingMode>;
+
+export const ConfigSchema = z.object({
+  routing: z
+    .object({
+      /** auto = annotate while context-mode is installed, enforce once it is gone. */
+      mode: RoutingMode.default("auto"),
+      deferToContextMode: z.boolean().default(true),
+    })
+    .prefault({}),
+  sandbox: z
+    .object({
+      timeoutMs: z.number().int().positive().default(60_000),
+      maxOutputBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(2 * 1024 * 1024),
+      /** Outputs larger than this are indexed and only matching sections are returned. */
+      indexThreshold: z
+        .number()
+        .int()
+        .positive()
+        .default(5 * 1024),
+      /** Extra env var names/globs passed through to sandboxed processes. */
+      envAllow: z.array(z.string()).default([]),
+      /** Disable specific languages per project (e.g. "javascript" when Bash rules must be enforced). */
+      disabledLanguages: z.array(z.string()).default([]),
+    })
+    .prefault({}),
+  search: z
+    .object({
+      defaultLimit: z.number().int().positive().default(5),
+      defaultMaxTokens: z.number().int().positive().default(2000),
+    })
+    .prefault({}),
+  embeddings: z
+    .object({
+      enabled: z.boolean().default(true),
+      model: z.string().default("Xenova/bge-small-en-v1.5"),
+      dims: z.number().int().positive().default(384),
+    })
+    .prefault({}),
+  graph: z
+    .object({
+      include: z
+        .array(z.string())
+        .default(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]),
+      exclude: z
+        .array(z.string())
+        .default([
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/.git/**",
+          "**/coverage/**",
+          "**/*.d.ts",
+        ]),
+    })
+    .prefault({}),
+  git: z
+    .object({
+      maxCommits: z.number().int().positive().default(3000),
+    })
+    .prefault({}),
+  index: z
+    .object({
+      /** Doc globs indexed by `em_reindex docs` / `eminiar index`. */
+      docs: z.array(z.string()).default(["**/*.md", "**/*.mdx"]),
+    })
+    .prefault({}),
+  permissions: z
+    .object({
+      /** Extra deny rules in Claude Code syntax, e.g. "Bash(rm -rf *)". */
+      extraDeny: z.array(z.string()).default([]),
+    })
+    .prefault({}),
+});
+
+export type Config = z.infer<typeof ConfigSchema>;
+
+function readJson(file: string): Record<string, unknown> {
+  if (!existsSync(file)) return {};
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch (err) {
+    process.stderr.write(`eminiar: ignoring malformed ${file}: ${(err as Error).message}\n`);
+    return {};
+  }
+}
+
+function deepMerge(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    const cur = out[k];
+    if (isPlainObject(cur) && isPlainObject(v)) out[k] = deepMerge(cur, v);
+    else out[k] = v;
+  }
+  return out;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function envOverrides(): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  const mode = process.env.EMINIAR_ROUTING_MODE;
+  if (mode && RoutingMode.safeParse(mode).success) o.routing = { mode };
+  if (process.env.EMINIAR_EMBEDDINGS === "0") o.embeddings = { enabled: false };
+  return o;
+}
+
+/**
+ * Precedence: defaults < ~/.eminiar/config.json < <root>/eminiar.config.json < EMINIAR_* env.
+ * The project file is the one teams commit.
+ */
+export function loadConfig(projectRoot: string): Config {
+  const merged = deepMerge(
+    deepMerge(readJson(paths().configFile), readJson(join(projectRoot, "eminiar.config.json"))),
+    envOverrides(),
+  );
+  const parsed = ConfigSchema.safeParse(merged);
+  if (parsed.success) return parsed.data;
+  process.stderr.write(`eminiar: invalid config, using defaults: ${parsed.error.message}\n`);
+  return ConfigSchema.parse({});
+}

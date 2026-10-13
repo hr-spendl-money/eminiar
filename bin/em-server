@@ -1,0 +1,15 @@
+#!/bin/sh
+# MCP server shim (stdio). Same Node resolution as em-hook.
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+NODE=""
+if [ -f "$HOME/.eminiar/node-path" ]; then
+  NODE="$(cat "$HOME/.eminiar/node-path" 2>/dev/null)"
+fi
+if [ ! -x "$NODE" ]; then
+  NODE="$(command -v node 2>/dev/null)"
+fi
+if [ ! -x "$NODE" ]; then
+  echo "eminiar: no node binary found (run: npx eminiar install)" >&2
+  exit 1
+fi
+exec "$NODE" "$DIR/dist/server.js" "$@"

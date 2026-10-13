@@ -1,0 +1,58 @@
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+/** Root of all eminiar state. Override with EMINIAR_HOME (used by tests and the installer). */
+export function eminiarHome(): string {
+  return process.env.EMINIAR_HOME || join(homedir(), ".eminiar");
+}
+
+export interface EminiarPaths {
+  home: string;
+  projects: string;
+  models: string;
+  tmp: string;
+  plugin: string;
+  globalDb: string;
+  configFile: string;
+  nodePathFile: string;
+  installFile: string;
+  hookLog: string;
+  statuslineCache: string;
+}
+
+export function paths(): EminiarPaths {
+  const home = eminiarHome();
+  return {
+    home,
+    projects: join(home, "projects"),
+    models: join(home, "models"),
+    tmp: join(home, "tmp"),
+    plugin: join(home, "plugin"),
+    globalDb: join(home, "global.db"),
+    configFile: join(home, "config.json"),
+    nodePathFile: join(home, "node-path"),
+    installFile: join(home, "install.json"),
+    hookLog: join(home, "hook.log"),
+    statuslineCache: join(home, "statusline.cache"),
+  };
+}
+
+/** Create the data directories. Idempotent and cheap; safe to call from hooks. */
+export function ensureDirs(): EminiarPaths {
+  const p = paths();
+  for (const dir of [p.home, p.projects, p.models, p.tmp]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  return p;
+}
+
+export function projectDir(projectId: string): string {
+  const dir = join(paths().projects, projectId);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function projectDbPath(projectId: string): string {
+  return join(projectDir(projectId), "eminiar.db");
+}

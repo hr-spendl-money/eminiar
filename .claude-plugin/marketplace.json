@@ -1,0 +1,12 @@
+{
+  "name": "eminiar",
+  "owner": { "name": "Ryan Dick" },
+  "description": "Local-first context, memory and knowledge graph plugin for Claude Code.",
+  "plugins": [
+    {
+      "name": "eminiar",
+      "source": "./",
+      "description": "Local-first context, memory and knowledge graph for Claude Code."
+    }
+  ]
+}

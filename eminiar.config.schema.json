@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "routing": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "mode": {
+          "default": "auto",
+          "type": "string",
+          "enum": [
+            "off",
+            "annotate",
+            "enforce",
+            "auto"
+          ]
+        },
+        "deferToContextMode": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "sandbox": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "timeoutMs": {
+          "default": 60000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxOutputBytes": {
+          "default": 2097152,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "indexThreshold": {
+          "default": 5120,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "envAllow": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "disabledLanguages": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "search": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "defaultLimit": {
+          "default": 5,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "defaultMaxTokens": {
+          "default": 2000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "embeddings": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "model": {
+          "default": "Xenova/bge-small-en-v1.5",
+          "type": "string"
+        },
+        "dims": {
+          "default": 384,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "graph": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "include": {
+          "default": [
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx",
+            "**/*.mjs",
+            "**/*.cjs"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/.git/**",
+            "**/coverage/**",
+            "**/*.d.ts"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "git": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "maxCommits": {
+          "default": 3000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "index": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "docs": {
+          "default": [
+            "**/*.md",
+            "**/*.mdx"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "permissions": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "extraDeny": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "title": "eminiar.config.json",
+  "description": "Per-project eminiar settings. Commit this file so teammates share the same behaviour."
+}

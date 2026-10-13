@@ -1,0 +1,17 @@
+#!/bin/sh
+# Hook entry shim. Resolves the Node binary pinned at install time so hooks keep
+# working regardless of the PATH Claude Code was launched with (nvm, volta, ...).
+# A hook must never block Claude: if nothing can run, print an empty JSON object.
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+NODE=""
+if [ -f "$HOME/.eminiar/node-path" ]; then
+  NODE="$(cat "$HOME/.eminiar/node-path" 2>/dev/null)"
+fi
+if [ ! -x "$NODE" ]; then
+  NODE="$(command -v node 2>/dev/null)"
+fi
+if [ ! -x "$NODE" ]; then
+  echo '{}'
+  exit 0
+fi
+exec "$NODE" "$DIR/dist/hook.js" "$@"
