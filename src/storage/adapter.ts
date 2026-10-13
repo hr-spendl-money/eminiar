@@ -69,6 +69,8 @@ export interface StorageAdapter {
   sessionUpsert(row: SessionPatch): void;
   sessionGet(id: string): SessionRow | undefined;
   sessionLatest(): SessionRow | undefined;
+  /** Most recently started sessions first. */
+  sessionsRecent(limit: number): SessionRow[];
   eventInsert(e: EventInput): number;
   eventsBySession(sessionId: string, opts?: { categories?: string[]; limit?: number }): EventRow[];
   eventsRecent(limit: number, categories?: string[]): EventRow[];

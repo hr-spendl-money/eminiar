@@ -63,22 +63,84 @@ describe("dashboard", () => {
     };
     expect(search.hits[0]?.title).toContain("README.md");
 
+    const post = (p: string, body: unknown, method = "POST") =>
+      get(p, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
     const added = JSON.parse(
       (
-        await get("/api/memories", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ kind: "fact", content: "dashboard test memory" }),
+        await post("/api/memories", {
+          kind: "fact",
+          content: "dashboard test memory",
+          tags: "a, b",
         })
       ).body,
-    ) as { id: number };
+    ) as { id: number; name: string };
     expect(added.id).toBeGreaterThan(0);
-    const list = JSON.parse((await get("/api/memories")).body) as Array<{ id: number }>;
-    expect(list.some((m) => m.id === added.id)).toBe(true);
-    await get(`/api/memories?id=${added.id}`, { method: "DELETE" });
-    expect((JSON.parse((await get("/api/memories")).body) as unknown[]).length).toBe(
-      list.length - 1,
+    expect(added.name).toBe("fact/dashboard-test-memory");
+    type MemList = { memories: Array<{ id: number; name: string; tags: string[] }> };
+    const list = JSON.parse((await get("/api/memories")).body) as MemList;
+    const mine = list.memories.find((m) => m.id === added.id);
+    expect(mine?.tags).toEqual(["a", "b"]);
+
+    const updated = JSON.parse(
+      (
+        await post(
+          `/api/memories?name=${added.name}`,
+          { content: "edited body", kind: "note" },
+          "PUT",
+        )
+      ).body,
+    ) as { name: string };
+    expect(updated.name).toBe(added.name);
+    const body = JSON.parse((await get(`/api/memories?name=${added.name}`)).body) as {
+      body: string;
+      kind: string;
+      tags: string[];
+    };
+    expect(body.body).toBe("edited body");
+    expect(body.kind).toBe("note");
+    expect(body.tags).toEqual(["a", "b"]);
+
+    const renamed = JSON.parse(
+      (await post(`/api/memories?name=${added.name}`, { to: "note/renamed-memory" }, "PATCH")).body,
+    ) as { name: string };
+    expect(renamed.name).toBe("note/renamed-memory");
+
+    await get("/api/memories?name=note/renamed-memory", { method: "DELETE" });
+    expect((JSON.parse((await get("/api/memories")).body) as MemList).memories.length).toBe(
+      list.memories.length - 1,
     );
+
+    const sessions = JSON.parse((await get("/api/sessions")).body) as unknown[];
+    expect(Array.isArray(sessions)).toBe(true);
+
+    const map = JSON.parse((await get("/api/graph?mode=map")).body) as {
+      mode: string;
+      nodes: unknown[];
+      edges: unknown[];
+    };
+    expect(map.mode).toBe("map");
+    expect(Array.isArray(map.nodes)).toBe(true);
+    const sub = JSON.parse((await get("/api/graph?mode=subgraph&node=nope")).body) as {
+      error?: string;
+    };
+    expect(sub.error).toBe("unknown node");
+
+    const action = JSON.parse((await post("/api/actions", { action: "reconcile" })).body) as {
+      ok: boolean;
+      output: string;
+    };
+    expect(action.ok).toBe(true);
+    expect(action.output).toContain("memories:");
+    const refused = JSON.parse(
+      (await post("/api/actions", { action: "purge", scope: "index" })).body,
+    ) as { ok: boolean };
+    expect(refused.ok).toBe(false);
+    expect((await get("/api/actions")).status).toBe(405);
 
     expect((await get("/api/nope")).status).toBe(404);
     expect((await get("/api/search")).status).toBe(400);
