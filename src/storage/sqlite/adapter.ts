@@ -768,10 +768,12 @@ export class SqliteAdapter implements StorageAdapter {
   // --- memories ----------------------------------------------------------
 
   memoryInsert(m: MemoryInput): number {
+    const now = Date.now();
     const info = this.db
       .prepare(
-        `INSERT INTO memories (kind, content, tags, node_ids, session_id, document_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memories (kind, content, tags, node_ids, session_id, document_id, created_at,
+                               name, path, file_hash, file_mtime, file_size, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         m.kind,
@@ -780,22 +782,80 @@ export class SqliteAdapter implements StorageAdapter {
         m.nodeIds?.length ? JSON.stringify(m.nodeIds) : null,
         m.sessionId ?? null,
         m.documentId ?? null,
-        Date.now(),
+        m.createdAt ?? now,
+        m.name ?? null,
+        m.path ?? null,
+        m.fileHash ?? null,
+        m.fileMtime ?? null,
+        m.fileSize ?? null,
+        m.updatedAt ?? null,
       );
     return Number(info.lastInsertRowid);
   }
 
-  memoryList(opts: { kind?: string | undefined; limit?: number | undefined } = {}): MemoryRow[] {
+  memoryList(
+    opts: {
+      kind?: string | undefined;
+      topic?: string | undefined;
+      limit?: number | undefined;
+    } = {},
+  ): MemoryRow[] {
     const params: unknown[] = [];
     let where = "1=1";
     if (opts.kind) {
       where += " AND kind = ?";
       params.push(opts.kind);
     }
+    if (opts.topic) {
+      where += " AND name LIKE ? ESCAPE '\\'";
+      params.push(`${opts.topic.replace(/[%_\\]/g, "\\$&")}/%`);
+    }
     params.push(opts.limit ?? 100);
     return this.db
-      .prepare(`SELECT * FROM memories WHERE ${where} ORDER BY created_at DESC LIMIT ?`)
+      .prepare(
+        `SELECT * FROM memories WHERE ${where} ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ?`,
+      )
       .all(...params) as MemoryRow[];
+  }
+
+  memoryGet(id: number): MemoryRow | undefined {
+    return this.db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryRow | undefined;
+  }
+
+  memoryGetByName(name: string): MemoryRow | undefined {
+    return this.db.prepare("SELECT * FROM memories WHERE name = ?").get(name) as
+      | MemoryRow
+      | undefined;
+  }
+
+  memoryUpsertByName(m: MemoryInput & { name: string }): number {
+    return this.transaction(() => {
+      const existing = this.memoryGetByName(m.name);
+      if (!existing) return this.memoryInsert(m);
+      this.db
+        .prepare(
+          `UPDATE memories SET kind = ?, content = ?, tags = ?, node_ids = ?, session_id = COALESCE(?, session_id),
+             document_id = ?, path = ?, file_hash = ?, file_mtime = ?, file_size = ?,
+             created_at = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          m.kind,
+          m.content,
+          m.tags?.length ? JSON.stringify(m.tags) : null,
+          m.nodeIds?.length ? JSON.stringify(m.nodeIds) : null,
+          m.sessionId ?? null,
+          m.documentId ?? null,
+          m.path ?? existing.path,
+          m.fileHash ?? existing.file_hash,
+          m.fileMtime ?? existing.file_mtime,
+          m.fileSize ?? existing.file_size,
+          m.createdAt ?? existing.created_at,
+          m.updatedAt ?? Date.now(),
+          existing.id,
+        );
+      return existing.id;
+    });
   }
 
   memoryDelete(id: number): void {
@@ -806,6 +866,17 @@ export class SqliteAdapter implements StorageAdapter {
       if (row?.document_id) this.deleteDocument(row.document_id);
       this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
     });
+  }
+
+  memoryDeleteByName(name: string): void {
+    const row = this.memoryGetByName(name);
+    if (row) this.memoryDelete(row.id);
+  }
+
+  memoryLegacyRows(): MemoryRow[] {
+    return this.db
+      .prepare("SELECT * FROM memories WHERE name IS NULL ORDER BY created_at")
+      .all() as MemoryRow[];
   }
 
   memoryCount(): number {
@@ -849,6 +920,14 @@ export class SqliteAdapter implements StorageAdapter {
       }
       if (scope === "memories" || scope === "all") {
         this.db.exec("DELETE FROM memories;");
+        // The index and graph scopes clear their own tables; a memories-only purge must
+        // still drop the mirrored documents and memory nodes. The files stay on disk.
+        if (scope === "memories") {
+          this.deleteDocumentsBySource("memory");
+          this.db.exec(
+            "DELETE FROM graph_edges WHERE src LIKE 'memory:%' OR dst LIKE 'memory:%'; DELETE FROM graph_nodes WHERE id LIKE 'memory:%';",
+          );
+        }
       }
     });
     this.db.exec("VACUUM");

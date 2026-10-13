@@ -1,19 +1,26 @@
 import { z } from "zod";
 import { kickEmbedding } from "../embeddings/queue.js";
-import { indexContent } from "../index/indexer.js";
+import { gitignoreHint, MEMORY_KINDS, reconcile, write } from "../memory/store.js";
 import { getCurrentSession } from "../session/current.js";
 import { getStorage } from "../storage/index.js";
-import { defineTool, text } from "./types.js";
+import { defineTool, errorResult, text } from "./types.js";
 
-export const MEMORY_KINDS = ["decision", "constraint", "fact", "preference", "todo"] as const;
+export { MEMORY_KINDS };
 
 export const emRemember = defineTool({
   name: "em_remember",
   description:
-    "Record something worth keeping across sessions: a decision and why, a constraint, a project fact, a user preference or a todo. It is indexed for em_search / em_recall and linked to the graph when related files are given.",
+    "Record something worth keeping across sessions as a named markdown memory under .eminiar/memories/<topic>/<name>.md (human-editable, git-shareable): a decision and why, a constraint, a project fact, a user preference, a todo, a note, or onboarding knowledge. It is indexed for em_search / em_recall and linked in the graph to related_files / related_nodes. Manage existing memories with em_memory.",
   schema: {
     content: z.string().min(3).describe("The memory, written so it makes sense without context"),
     kind: z.enum(MEMORY_KINDS),
+    name: z
+      .string()
+      .optional()
+      .describe(
+        "topic/slug (lowercase, [a-z0-9._-]), e.g. auth/session-tokens; derived from kind + content when omitted",
+      ),
+    replace: z.boolean().optional().describe("Overwrite a memory that already has this name"),
     tags: z.array(z.string()).optional(),
     related_files: z
       .array(z.string())
@@ -26,42 +33,37 @@ export const emRemember = defineTool({
   },
   handler: async (args, ctx) => {
     const db = getStorage(ctx);
-    const nodeIds = [
+    reconcile(ctx, db);
+    const sessionId = getCurrentSession(ctx);
+    const related = [
       ...(args.related_files ?? []).map((f) => `file:${f.replace(/^\.\//, "")}`),
       ...(args.related_nodes ?? []),
     ];
-    const sessionId = getCurrentSession(ctx);
-    const body = [
-      args.content,
-      args.tags?.length ? `tags: ${args.tags.join(", ")}` : "",
-      nodeIds.length ? `related: ${nodeIds.join(", ")}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const doc = indexContent(db, {
-      source: "memory",
-      title: `${args.kind}: ${args.content.slice(0, 60)}`,
-      content: body,
-      kind: "prose",
-      sessionId,
-      meta: { kind: args.kind, tags: args.tags ?? [], nodeIds },
-    });
-    const id = db.memoryInsert({
-      kind: args.kind,
-      content: args.content,
-      tags: args.tags,
-      nodeIds,
-      sessionId,
-      documentId: doc.documentId,
-    });
+    let r: ReturnType<typeof write>;
+    try {
+      r = write(ctx, db, {
+        name: args.name,
+        kind: args.kind,
+        content: args.content,
+        tags: args.tags,
+        related,
+        replace: args.replace,
+        sessionId,
+      });
+    } catch (err) {
+      return errorResult((err as Error).message);
+    }
     db.eventInsert({
       sessionId,
       category:
         args.kind === "constraint" ? "constraint" : args.kind === "decision" ? "decision" : "data",
       priority: args.kind === "constraint" || args.kind === "decision" ? 2 : 4,
-      payload: { text: args.content.slice(0, 300), by: "em_remember", memoryId: id },
+      payload: { text: args.content.slice(0, 300), by: "em_remember", memory: r.name },
     });
     kickEmbedding(ctx, db);
-    return text(`remembered #${id} (${args.kind}): ${args.content.slice(0, 120)}`);
+    const hint = gitignoreHint(ctx);
+    return text(
+      `remembered ${r.name} (${args.kind}) → ${r.path}${r.created ? "" : " (replaced)"}${hint ? `\n${hint}` : ""}`,
+    );
   },
 });

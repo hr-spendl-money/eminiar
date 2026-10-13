@@ -172,6 +172,16 @@
           }
         }
       }
+    },
+    "memories": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "dir": {
+          "default": ".eminiar/memories",
+          "type": "string"
+        }
+      }
     }
   },
   "title": "eminiar.config.json",

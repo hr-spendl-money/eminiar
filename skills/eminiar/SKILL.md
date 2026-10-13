@@ -17,7 +17,11 @@ surfacing only the answer.
 - **Web pages.** `em_fetch_and_index` fetches and indexes a URL; follow with `em_search`.
 - **Ask what's known.** `em_search` (multiple queries, `sort: "timeline"` after a resume) and
   `em_recall` for decisions, constraints and errors captured from earlier sessions.
-- **Record decisions.** `em_remember` with kind `decision|constraint|fact|preference|todo`.
+- **Record decisions.** `em_remember {content, kind, name?}` with kind
+  `decision|constraint|fact|preference|todo|note|onboarding` writes a markdown memory under
+  `.eminiar/memories/<topic>/<name>.md` (human-editable, committed with the repo).
+  `em_memory {action: list|read|edit|rename|delete}` manages them; `/em-onboard` writes the
+  onboarding set.
 - **Before refactors.** `em_graph_impact` on a file or symbol lists dependents, co-changing files
   and the reasons.
 

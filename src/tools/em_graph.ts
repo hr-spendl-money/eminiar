@@ -34,13 +34,15 @@ async function ensureGraph(ctx: Parameters<typeof getStorage>[0]) {
 export const emGraphQuery = defineTool({
   name: "em_graph_query",
   description:
-    "Look up nodes in the project knowledge graph (files, functions, classes, packages, people, concepts) by name/path, or run a preset: hotspots (most-changed files), coupled (files that change together), orphans (files nothing imports). The graph is built on first use from tree-sitter (TS/JS), git history and em_remember/em_graph_add.",
+    "Look up nodes in the project knowledge graph (files, functions, classes, packages, people, concepts, memories) by name/path, or run a preset: hotspots (most-changed files), coupled (files that change together), orphans (files nothing imports). The graph is built on first use from tree-sitter (TS/JS), git history, the memories under .eminiar/memories (memory:<name> nodes with `mentions` edges) and em_graph_add.",
   schema: {
     query: z.string().optional().describe("Substring of a name, path or id"),
     kind: z
       .string()
       .optional()
-      .describe("file | function | class | method | interface | type | package | person | concept"),
+      .describe(
+        "file | function | class | method | interface | type | package | person | concept | memory",
+      ),
     path: z.string().optional().describe("Restrict to nodes whose path contains this"),
     preset: z.enum(["hotspots", "coupled", "orphans", "stats"]).optional(),
     limit: z.number().int().min(1).max(100).optional(),
@@ -240,9 +242,12 @@ export const emGraphAdd = defineTool({
 export const emReindex = defineTool({
   name: "em_reindex",
   description:
-    "Rebuild parts of the local index: code (tree-sitter graph + code search), git (co-change/hotspots), docs (markdown per eminiar.config.json index.docs), embeddings (vectors for unembedded chunks), or all. Incremental unless full: true.",
+    "Rebuild parts of the local index: code (tree-sitter graph + code search), git (co-change/hotspots), docs (markdown per eminiar.config.json index.docs), memories (re-import .eminiar/memories files edited by hand), embeddings (vectors for unembedded chunks), or all. Incremental unless full: true.",
   schema: {
-    scope: z.enum(["code", "git", "docs", "embeddings", "all"]).optional().describe("default all"),
+    scope: z
+      .enum(["code", "git", "docs", "memories", "embeddings", "all"])
+      .optional()
+      .describe("default all"),
     paths: z.array(z.string()).optional().describe("Only these files (code scope)"),
     full: z.boolean().optional(),
   },
@@ -271,6 +276,13 @@ export const emReindex = defineTool({
       const { indexPath } = await import("../index/indexer.js");
       const s = indexPath(db, ctx.root, ".", { source: "file", globs: ctx.config.index.docs });
       lines.push(`docs: ${s.files} files, ${s.indexed} indexed, ${s.unchanged} unchanged`);
+    }
+    if (scope === "memories" || scope === "all") {
+      const { reconcile } = await import("../memory/store.js");
+      const s = reconcile(ctx, db);
+      lines.push(
+        `memories: ${s.files} files, ${s.synced} synced, ${s.removed} removed${s.migrated ? `, ${s.migrated} migrated from the database into files` : ""}${s.skipped.length ? `, ${s.skipped.length} skipped (invalid name, e.g. ${s.skipped[0]})` : ""}`,
+      );
     }
     if (scope === "embeddings" || scope === "all") {
       const { getProvider } = await import("../embeddings/provider.js");

@@ -5,7 +5,7 @@ import { defineTool, errorResult, text } from "./types.js";
 export const emPurge = defineTool({
   name: "em_purge",
   description:
-    "Permanently delete eminiar data for this project. scope: index (documents/chunks/vectors/caches), sessions (events, snapshots, stats), graph, memories, or all. Requires confirm: true.",
+    "Permanently delete eminiar data for this project. scope: index (documents/chunks/vectors/caches), sessions (events, snapshots, stats), graph, memories (the database mirror only; the markdown files under .eminiar/memories stay and are re-imported on the next memory call — delete files with em_memory), or all. Requires confirm: true.",
   schema: {
     scope: z.enum(["index", "sessions", "graph", "memories", "all"]),
     confirm: z.boolean().describe("Must be true; this cannot be undone"),
@@ -15,6 +15,10 @@ export const emPurge = defineTool({
     const db = getStorage(ctx);
     const before = db.countDocuments();
     db.purge(args.scope);
-    return text(`purged ${args.scope} for ${ctx.root} (${before} documents before)`);
+    const note =
+      args.scope === "memories" || args.scope === "all"
+        ? `; memory files under ${ctx.config.memories.dir} were left in place and will be re-imported (em_memory {action:"delete"} removes files)`
+        : "";
+    return text(`purged ${args.scope} for ${ctx.root} (${before} documents before)${note}`);
   },
 });

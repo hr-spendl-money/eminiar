@@ -140,6 +140,15 @@ export interface MemoryInput {
   nodeIds?: string[] | undefined;
   sessionId?: string | undefined;
   documentId?: number | undefined;
+  /** `topic/slug`; the markdown file is `<memories.dir>/<name>.md`. */
+  name?: string | undefined;
+  /** Project-relative path of that file. */
+  path?: string | undefined;
+  fileHash?: string | undefined;
+  fileMtime?: number | undefined;
+  fileSize?: number | undefined;
+  createdAt?: number | undefined;
+  updatedAt?: number | undefined;
 }
 
 export interface MemoryRow {
@@ -151,6 +160,12 @@ export interface MemoryRow {
   session_id: string | null;
   document_id: number | null;
   created_at: number;
+  name: string | null;
+  path: string | null;
+  file_hash: string | null;
+  file_mtime: number | null;
+  file_size: number | null;
+  updated_at: number | null;
 }
 
 export type GraphSource = "tree-sitter" | "curated" | "git";

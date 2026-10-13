@@ -176,6 +176,21 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 `,
   },
+  {
+    // Memories became markdown files under <project>/.eminiar/memories; the row mirrors
+    // one file (name = topic/slug) and remembers its hash/mtime/size so reconcile can
+    // skip unchanged files. Rows with name NULL are legacy and get migrated to files.
+    version: 2,
+    sql: `
+ALTER TABLE memories ADD COLUMN name TEXT;
+ALTER TABLE memories ADD COLUMN path TEXT;
+ALTER TABLE memories ADD COLUMN file_hash TEXT;
+ALTER TABLE memories ADD COLUMN file_mtime INTEGER;
+ALTER TABLE memories ADD COLUMN file_size INTEGER;
+ALTER TABLE memories ADD COLUMN updated_at INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS memories_name ON memories(name) WHERE name IS NOT NULL;
+`,
+  },
 ];
 
 /** vec0 lives outside the migration list: it needs the extension loaded first and takes the dimension. */

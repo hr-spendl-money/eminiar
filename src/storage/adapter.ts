@@ -117,8 +117,21 @@ export interface StorageAdapter {
 
   // --- memories ----------------------------------------------------------
   memoryInsert(m: MemoryInput): number;
-  memoryList(opts?: { kind?: string | undefined; limit?: number | undefined }): MemoryRow[];
+  memoryList(opts?: {
+    kind?: string | undefined;
+    /** Only names under `topic/`. */
+    topic?: string | undefined;
+    limit?: number | undefined;
+  }): MemoryRow[];
+  memoryGet(id: number): MemoryRow | undefined;
+  memoryGetByName(name: string): MemoryRow | undefined;
+  /** Insert or update the row mirroring a named memory file; returns its id. */
+  memoryUpsertByName(m: MemoryInput & { name: string }): number;
   memoryDelete(id: number): void;
+  /** Delete the row and its indexed document (the file is the caller's business). */
+  memoryDeleteByName(name: string): void;
+  /** Rows from before memories lived in files (name IS NULL), oldest first. */
+  memoryLegacyRows(): MemoryRow[];
   memoryCount(): number;
 
   // --- misc --------------------------------------------------------------
