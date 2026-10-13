@@ -8,7 +8,16 @@ import { markServerAlive } from "./session/server-alive.js";
 import { getStorage } from "./storage/index.js";
 import { tools } from "./tools/index.js";
 import { errorResult } from "./tools/types.js";
-import { version } from "./version.js";
+import { pluginRoot, version } from "./version.js";
+
+// `em-server --probe` is the installer's and doctor's cheap "can this copy start?" check:
+// reaching this line means every static import above (better-sqlite3, sqlite-vec, the MCP
+// SDK) resolved, which is exactly what fails when Claude Code launches a cache copy that
+// has no node_modules.
+if (process.argv.includes("--probe")) {
+  process.stdout.write(`eminiar ${version()} ok root=${pluginRoot()} node=${process.execPath}\n`);
+  process.exit(0);
+}
 
 const server = new McpServer({ name: "eminiar", version: version() });
 

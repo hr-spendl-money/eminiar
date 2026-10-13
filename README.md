@@ -84,6 +84,23 @@ eminiar stats | recall "query" | serve --open | statusline
 Add `"statusLine": {"type": "command", "command": "eminiar statusline"}` to `~/.claude/settings.json`
 (or pass `--statusline` to `install`) for `eminiar · 12.3k saved · 1.1M lifetime · 87% efficient`.
 
+## Troubleshooting
+
+**"The eminiar plugin server did not connect this session (retries in about 15 minutes)"**,
+typically in the Claude Code desktop app while the terminal works. Claude Code launches plugins
+from a copy under `~/.claude/plugins/cache/eminiar/eminiar/<version>` that has `dist/` but no
+`node_modules/`. The `bin/` shims handle this by running the stable copy pinned in
+`~/.eminiar/root-path` whenever their own directory cannot resolve dependencies. If the pin is
+missing (installs before 0.1.1) run:
+
+```sh
+npx eminiar install      # or: eminiar upgrade — re-pins and refreshes the cache copy
+eminiar doctor --fix     # re-pins and clears Claude Code's cached launch failure
+```
+
+then restart Claude Code. `eminiar doctor` probes every cached copy with `bin/em-server --probe`
+and reports the cached failure with the time it expires.
+
 ## Develop
 
 ```sh

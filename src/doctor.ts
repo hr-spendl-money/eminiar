@@ -1,5 +1,6 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { ensureDirs, paths } from "./paths.js";
 import { pluginRoot, version } from "./version.js";
 
@@ -24,7 +25,14 @@ export function runDoctor(): Check[] {
   const p = ensureDirs();
   const checks: Check[] = [];
 
-  checks.push({ name: "eminiar", ok: true, detail: `v${version()} at ${pluginRoot()}` });
+  // EMINIAR_LAUNCH_ROOT is set by bin/_resolve.sh when it fell back to the pinned stable
+  // copy because the launched directory (Claude Code's plugin cache) has no node_modules.
+  const launched = process.env.EMINIAR_LAUNCH_ROOT;
+  checks.push({
+    name: "eminiar",
+    ok: true,
+    detail: `v${version()} at ${pluginRoot()}${launched ? ` (launched from ${launched})` : ""}`,
+  });
 
   checks.push(
     check("node", () => {
@@ -42,6 +50,17 @@ export function runDoctor(): Check[] {
       const pinned = readFileSync(p.nodePathFile, "utf8").trim();
       accessSync(pinned, constants.X_OK);
       return pinned;
+    }),
+  );
+
+  checks.push(
+    check("root-path pin", () => {
+      if (!existsSync(p.rootPathFile))
+        return "not pinned (run `eminiar install`); the bin/ shims run only from a directory that has node_modules";
+      const root = readFileSync(p.rootPathFile, "utf8").trim();
+      if (!existsSync(join(root, "dist", "server.js")))
+        throw new Error(`${root} has no dist/server.js (run \`eminiar install\`)`);
+      return root;
     }),
   );
 

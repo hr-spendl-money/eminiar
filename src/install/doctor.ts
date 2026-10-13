@@ -8,10 +8,17 @@ import { contextModeInstalled, effectiveRoutingMode } from "../hooks/coexist.js"
 import { availableLanguages } from "../sandbox/languages.js";
 import { liveServers } from "../session/server-alive.js";
 import { getStorage } from "../storage/index.js";
-import { pluginInstalled, readInstallRecord } from "./claude-config.js";
-import { stableRoot } from "./materialize.js";
-import { pinnedNode } from "./node-resolve.js";
-import { pluginCacheStale } from "./register.js";
+import {
+  clearNeedsAuthEntry,
+  needsAuthEntry,
+  pluginCacheDirs,
+  pluginInstalled,
+  pluginInstallPath,
+  readInstallRecord,
+} from "./claude-config.js";
+import { stableRoot, stableVersion } from "./materialize.js";
+import { pinNode, pinnedNode, pinnedRoot, pinRoot } from "./node-resolve.js";
+import { pluginCacheStale, probeServer } from "./register.js";
 import { run } from "./shell.js";
 
 /** Spawn a binary, send one MCP initialize request, expect a JSON-RPC reply within `ms`. */
@@ -46,13 +53,39 @@ function mcpHandshake(bin: string, ms = 15_000): Promise<string> {
   });
 }
 
-/** Everything `runDoctor` checks plus installation, hooks, MCP and config. */
-export async function fullDoctor(): Promise<Check[]> {
-  const checks = runDoctor();
+/**
+ * Everything `runDoctor` checks plus installation, hooks, MCP and config.
+ * With `fix`, re-pin node and the stable root and forget Claude Code's cached launch failure.
+ */
+export async function fullDoctor(opts: { fix?: boolean } = {}): Promise<Check[]> {
   const rec = readInstallRecord();
   const stable = rec?.stableRoot ?? stableRoot();
   const hasStable = existsSync(join(stable, "dist", "server.js"));
   const bins = hasStable ? stable : join(process.argv[1] ?? "", "..", "..");
+  const fixed: string[] = [];
+  if (opts.fix && hasStable) {
+    try {
+      pinRoot(stable);
+      fixed.push("root-path pinned");
+      if (rec?.node) {
+        pinNode(rec.node);
+        fixed.push("node-path pinned");
+      }
+    } catch (err) {
+      fixed.push(`pin failed: ${(err as Error).message}`);
+    }
+  }
+
+  const checks = runDoctor();
+  // runDoctor treats a missing pin as informational; for a plugin install it is the
+  // difference between the desktop app connecting or not.
+  if (rec?.method === "plugin" && !pinnedRoot()) {
+    const c = checks.find((x) => x.name === "root-path pin");
+    if (c) {
+      c.ok = false;
+      c.detail = `${c.detail}; Claude Code's cached plugin copy cannot start without it — run \`eminiar doctor --fix\``;
+    }
+  }
 
   checks.push({
     name: "install",
@@ -80,6 +113,32 @@ export async function fullDoctor(): Promise<Check[]> {
           : "eminiar@eminiar installed, cache matches the stable copy"
         : "not in installed_plugins.json",
     });
+    // Claude Code launches the plugin from its cache (dist/ only, no node_modules). Start
+    // every cached version the way Claude Code would; the registered one must pass.
+    const live = pluginInstallPath("eminiar@eminiar");
+    const dirs = pluginCacheDirs();
+    if (dirs.length) {
+      let liveOk = !live;
+      const lines = dirs.map((dir) => {
+        const bad = probeServer(dir);
+        const isLive = dir === live;
+        if (isLive) liveOk = !bad;
+        const ver = dir.split("/").pop();
+        const tag = isLive ? "registered" : "leftover, safe to delete";
+        return `${ver} (${tag}): ${bad ?? "starts ok"}`;
+      });
+      const liveVer = live?.split("/").pop();
+      const sv = stableVersion();
+      const drift =
+        live && liveVer && sv && liveVer !== sv
+          ? `; cache is v${liveVer} but the stable copy is v${sv} — run \`eminiar upgrade\``
+          : "";
+      checks.push({
+        name: "plugin cache copies",
+        ok: liveOk,
+        detail: `${lines.join(" · ")}${drift}${liveOk ? "" : " — run `eminiar doctor --fix`, then `eminiar upgrade` if it still fails"}`,
+      });
+    }
   } else {
     const s = existsSync(join(process.env.HOME ?? "", ".claude", "settings.json"))
       ? readFileSync(join(process.env.HOME ?? "", ".claude", "settings.json"), "utf8")
@@ -90,6 +149,22 @@ export async function fullDoctor(): Promise<Check[]> {
       detail: s.includes("em-hook") ? "present" : "missing",
     });
   }
+
+  // Claude Code remembers a plugin server that died at launch and skips it for ~15 min.
+  const failed = needsAuthEntry();
+  if (failed && opts.fix && clearNeedsAuthEntry()) fixed.push("cached launch failure cleared");
+  const stillFailed = needsAuthEntry();
+  checks.push({
+    name: "Claude Code failure cache",
+    ok: !stillFailed,
+    detail: stillFailed
+      ? `a failed launch at ${new Date(stillFailed.timestamp).toISOString()} is cached; Claude Code skips the server until ${new Date(stillFailed.timestamp + 15 * 60_000).toISOString()} — run \`eminiar doctor --fix\` to clear it, then restart Claude Code`
+      : failed
+        ? "cleared; restart Claude Code to reconnect"
+        : "no cached launch failure",
+  });
+  if (opts.fix)
+    checks.push({ name: "fix", ok: true, detail: fixed.join(", ") || "nothing to fix" });
 
   const hookBin = join(bins, "bin", "em-hook");
   if (existsSync(hookBin)) {

@@ -1,6 +1,7 @@
 import { formatDoctor, runDoctor } from "../doctor.js";
 import { embeddingStatus } from "../embeddings/queue.js";
 import { contextModeInstalled, effectiveRoutingMode } from "../hooks/coexist.js";
+import { needsAuthEntry } from "../install/claude-config.js";
 import { availableLanguages } from "../sandbox/languages.js";
 import { getCurrentSession } from "../session/current.js";
 import { liveServers } from "../session/server-alive.js";
@@ -32,6 +33,17 @@ export const emDoctor = defineTool({
       detail: live.includes(process.pid)
         ? `this server (pid ${process.pid}) is marked live${live.length > 1 ? `; ${live.length - 1} other session(s)` : ""}`
         : "this server's liveness marker is missing; enforce routing will only annotate",
+    });
+    // Claude Code keeps a failed plugin launch on file for ~15 min and skips the server
+    // meanwhile. If we are answering, this session connected; the entry is from another
+    // client (typically the desktop app) and will make its next session skip us too.
+    const failed = needsAuthEntry();
+    checks.push({
+      name: "Claude Code failure cache",
+      ok: !failed,
+      detail: failed
+        ? `a failed launch at ${new Date(failed.timestamp).toISOString()} is cached; other sessions skip the server for 15 min — run \`eminiar doctor --fix\` in a terminal, then restart Claude Code`
+        : "no cached launch failure",
     });
     const db = getStorage(ctx);
     checks.push({ name: "embeddings", ok: true, detail: embeddingStatus(ctx, db) });
