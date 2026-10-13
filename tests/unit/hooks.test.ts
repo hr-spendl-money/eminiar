@@ -8,9 +8,11 @@ import { handlers } from "../../src/hooks/index.js";
 import { suggest } from "../../src/hooks/routing.js";
 import type { HookInput } from "../../src/hooks/types.js";
 import { renderWithin } from "../../src/session/guide.js";
+import { liveServers, markServerAlive } from "../../src/session/server-alive.js";
 import { closeAllStorage, getStorage } from "../../src/storage/index.js";
 
 let root: string;
+let unmark: () => void;
 const base = (over: Partial<HookInput>): HookInput => ({
   session_id: "s1",
   cwd: root,
@@ -30,8 +32,11 @@ beforeAll(() => {
   );
   writeFileSync(join(root, "big.log"), "x".repeat(30 * 1024));
   resetContextCache();
+  // enforce only denies while a server is marked live for the project; this process stands in
+  unmark = markServerAlive(getContext(root));
 });
 afterAll(() => {
+  unmark();
   closeAllStorage();
   delete process.env.EMINIAR_HOME;
   delete process.env.EMINIAR_ROUTING_MODE;
@@ -155,6 +160,37 @@ describe("hook handlers end to end", () => {
     );
     expect(resume?.hookSpecificOutput?.additionalContext).toContain("## Session Guide (eminiar)");
     expect(db.snapshotLatestUnconsumed("s1")).toBeUndefined();
+  });
+});
+
+describe("server liveness", () => {
+  it("drops markers for dead pids and keeps live ones", () => {
+    const ctx = getContext(root);
+    // 2^22 is above the default pid_max on Linux and macOS, so it is never a live process
+    const dead = markServerAlive(ctx, 4_194_304);
+    expect(liveServers(ctx)).toContain(process.pid);
+    expect(liveServers(ctx)).not.toContain(4_194_304);
+    dead();
+  });
+
+  it("annotates instead of denying in enforce mode when no server is running", async () => {
+    const other = mkdtempSync(join(tmpdir(), "em-root-noserver-"));
+    writeFileSync(join(other, "package.json"), "{}");
+    writeFileSync(
+      join(other, "eminiar.config.json"),
+      JSON.stringify({ routing: { mode: "enforce", deferToContextMode: false } }),
+    );
+    const out = await handlers.PreToolUse!(
+      base({
+        hook_event_name: "PreToolUse",
+        cwd: other,
+        tool_name: "Bash",
+        tool_input: { command: "git log" },
+      }),
+    );
+    expect(out?.hookSpecificOutput?.permissionDecision).toBeUndefined();
+    expect(out?.hookSpecificOutput?.additionalContext).toContain("em_execute");
+    expect(out?.hookSpecificOutput?.additionalContext).toContain("not running");
   });
 });
 

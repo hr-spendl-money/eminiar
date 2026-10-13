@@ -1,10 +1,12 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   claudeJsonPath,
   type InstallRecord,
   type Json,
   marketplaceKnown,
+  pluginInstallPath,
   pluginInstalled,
   readJson,
   settingsPath,
@@ -24,6 +26,36 @@ const HOOK_EVENTS = [
   "SessionEnd",
 ];
 
+/** Files whose content must match between the stable copy and Claude Code's cached copy. */
+const CACHE_FINGERPRINT = ["dist/server.js", "dist/hook.js", ".claude-plugin/plugin.json"];
+
+function fileHash(file: string): string | undefined {
+  try {
+    return createHash("sha1").update(readFileSync(file)).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Claude Code copies a plugin into ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>
+ * and `claude plugin update` is a no-op while the version number is unchanged, so a
+ * re-packed dev build never reaches the running plugin. Compare content instead.
+ */
+export function pluginCacheStale(stable: string): string | undefined {
+  const cache = pluginInstallPath("eminiar@eminiar");
+  if (!cache || cache === stable) return undefined;
+  if (!existsSync(cache)) return `${cache} is missing`;
+  for (const rel of CACHE_FINGERPRINT) {
+    if (fileHash(join(cache, rel)) !== fileHash(join(stable, rel))) return `${rel} differs`;
+  }
+  // The old plugin-root .mcp.json must not come back: as a project-scope file it fails
+  // with ENOENT because ${CLAUDE_PLUGIN_ROOT} is empty there.
+  if (existsSync(join(cache, ".mcp.json")) && !existsSync(join(stable, ".mcp.json")))
+    return ".mcp.json is present in the cache but not in the stable copy";
+  return undefined;
+}
+
 /** Register through Claude Code's plugin system (preferred). */
 export function registerPlugin(stable: string): { ok: boolean; detail: string } {
   const claude = claudeCli();
@@ -38,19 +70,34 @@ export function registerPlugin(stable: string): { ok: boolean; detail: string } 
   } else {
     run(claude, ["plugin", "marketplace", "update", "eminiar"]);
   }
-  const inst = pluginInstalled("eminiar@eminiar")
+  const fresh = () => run(claude, ["plugin", "install", "eminiar@eminiar", "--scope", "user"]);
+  let inst = pluginInstalled("eminiar@eminiar")
     ? run(claude, ["plugin", "update", "eminiar@eminiar"])
-    : run(claude, ["plugin", "install", "eminiar@eminiar", "--scope", "user"]);
+    : fresh();
+  let reinstalled = false;
+  if (pluginInstalled("eminiar@eminiar") && pluginCacheStale(stable)) {
+    // Same version, different content: `update` kept the old cache. Reinstall to refresh it.
+    run(claude, ["plugin", "uninstall", "eminiar@eminiar"]);
+    inst = fresh();
+    reinstalled = true;
+  }
   if (!inst.ok && !pluginInstalled("eminiar@eminiar")) {
     return {
       ok: false,
       detail: `plugin install failed: ${(inst.stderr || inst.stdout).trim().slice(-300)}`,
     };
   }
+  const stale = pluginCacheStale(stable);
+  if (stale) {
+    return {
+      ok: false,
+      detail: `Claude Code's cached copy is out of date (${stale}); try \`claude plugin uninstall eminiar@eminiar\` then re-run`,
+    };
+  }
   return {
     ok: true,
     detail: pluginInstalled("eminiar@eminiar")
-      ? "registered via claude plugin"
+      ? `registered via claude plugin${reinstalled ? " (cache was stale; reinstalled)" : ""}`
       : "install command ran; verify with `claude plugin list`",
   };
 }
@@ -145,6 +192,7 @@ export function unregisterSettings(stable: string, wrote: InstallRecord["wrote"]
 export function setStatusline(stable: string): boolean {
   const settings = readJson(settingsPath());
   if (settings.statusLine) {
+    if (isOurs((settings.statusLine as Json).command, stable)) return true;
     log.warn(
       "a statusLine is already configured; leaving it alone (set it to `eminiar statusline` to show savings)",
     );

@@ -68,6 +68,18 @@ export function pluginInstalled(id: string): boolean {
   }
 }
 
+/** Where Claude Code copied the plugin to (its cache); undefined when not installed. */
+export function pluginInstallPath(id: string): string | undefined {
+  try {
+    const reg = JSON.parse(
+      readFileSync(join(pluginsDir(), "installed_plugins.json"), "utf8"),
+    ) as { plugins?: Record<string, { installPath?: string }[]> };
+    return reg.plugins?.[id]?.[0]?.installPath;
+  } catch {
+    return undefined;
+  }
+}
+
 export function marketplaceKnown(name: string): boolean {
   try {
     const raw = readFileSync(join(pluginsDir(), "known_marketplaces.json"), "utf8");

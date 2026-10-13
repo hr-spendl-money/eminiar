@@ -1,7 +1,9 @@
 import { statSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { getContext } from "../context.js";
+import { serverAlive } from "../session/server-alive.js";
 import { contextModeInstalled, effectiveRoutingMode } from "./coexist.js";
+import { hookLog } from "./log.js";
 import type { HookHandler, HookInput, HookOutput } from "./types.js";
 
 interface Suggestion {
@@ -116,6 +118,19 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
         },
       };
     }
+    // Denying only makes sense if there is an em_* server to retry with. If none is
+    // running for this project (failed to start, not yet connected, dev checkout
+    // without the plugin loaded), fall back to annotating so Claude is never stranded.
+    if (!serverAlive(ctx)) {
+      hookLog(
+        "info",
+        `enforce → annotate for ${input.tool_name}: no eminiar MCP server running for ${ctx.root}`,
+      );
+      return annotate(
+        s,
+        " eminiar MCP server is not running, so this call is allowed; /em-doctor explains.",
+      );
+    }
     return {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
@@ -124,10 +139,14 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
       },
     };
   }
+  return annotate(s);
+};
+
+function annotate(s: Suggestion, note = ""): HookOutput {
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: `eminiar: ${s.reason} (${s.tool}).`.slice(0, 400),
+      additionalContext: `eminiar: ${s.reason} (${s.tool}).${note}`.slice(0, 400),
     },
   };
-};
+}

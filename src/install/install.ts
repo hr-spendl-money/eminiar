@@ -20,9 +20,11 @@ export interface InstallOptions {
   marketplace?: string | undefined;
   node?: string | undefined;
   yes?: boolean;
-  statusline?: boolean;
+  statusline?: boolean | undefined;
   /** Registry spec to install instead of packing the running copy (upgrade uses this). */
   spec?: string | undefined;
+  /** Re-pack and reinstall the stable copy even when its version number is unchanged. */
+  force?: boolean;
 }
 
 export async function install(opts: InstallOptions): Promise<number> {
@@ -33,7 +35,7 @@ export async function install(opts: InstallOptions): Promise<number> {
   log.ok(`pinned ${node.path} (v${node.version})`);
 
   log.step("stable copy");
-  const { root: stable, fromSpec } = materialize(opts.spec);
+  const { root: stable, fromSpec } = materialize(opts.spec, !!opts.force);
 
   log.step("native modules");
   let failures = nativeCheck(node.path, stable);
@@ -97,7 +99,9 @@ export async function install(opts: InstallOptions): Promise<number> {
       "hooks written to ~/.claude/settings.json, MCP server to ~/.claude.json, skills to ~/.claude/skills",
     );
   }
-  if (opts.statusline || (opts.yes && !opts.team)) {
+  // Fresh `--yes` installs opt in; an explicit value (upgrade replays the previous choice) wins.
+  const wantStatusline = opts.statusline ?? (!!opts.yes && !opts.team);
+  if (wantStatusline) {
     if (setStatusline(stable)) {
       wrote.statusline = true;
       log.ok("statusLine set to `eminiar statusline`");

@@ -53,7 +53,9 @@ The plugin injects short routing guidance at session start. Slash commands: `/em
 Routing: `routing.mode` is `auto` — eminiar only *annotates* native Bash/Read/Grep/WebFetch calls
 while the context-mode plugin is installed (so the two never deny each other), and switches to
 hard `enforce` (deny + redirect to the `em_*` tool) once it is gone. Set `off`, `annotate` or
-`enforce` explicitly in `eminiar.config.json`.
+`enforce` explicitly in `eminiar.config.json`. `enforce` only denies while an eminiar MCP server
+is running for the project (the server leaves a pid marker under `~/.eminiar/projects/<id>/servers/`);
+with no server up it annotates instead, so Claude is never told to retry with a tool it cannot reach.
 
 Permissions: shell snippets are checked against Claude Code's `permissions.deny` / `ask` Bash
 rules per chained segment; `ask` counts as deny. Sandboxed processes get a stripped environment

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getContext } from "./context.js";
 import { kickEmbedding } from "./embeddings/queue.js";
 import { drainReindexQueue } from "./graph/reindex.js";
+import { markServerAlive } from "./session/server-alive.js";
 import { getStorage } from "./storage/index.js";
 import { tools } from "./tools/index.js";
 import { errorResult } from "./tools/types.js";
@@ -37,6 +38,20 @@ for (const tool of tools) {
 }
 
 await server.connect(new StdioServerTransport());
+
+// Leave a pid marker so the PreToolUse hook knows an em_* server is reachable for this
+// project and may safely deny native calls in enforce mode. The marker goes away on any
+// orderly exit; the hook discards markers whose pid no longer exists.
+try {
+  const unmark = markServerAlive(getContext());
+  process.on("exit", unmark);
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+    process.on(sig, () => process.exit(0));
+  // A stdio server has no reason to outlive its client.
+  process.stdin.on("end", () => process.exit(0));
+} catch (err) {
+  process.stderr.write(`eminiar: liveness marker skipped: ${(err as Error).message}\n`);
+}
 
 // Warm the project in the background so the first em_* call is fast: parse
 // changed code into the graph, refresh git signals, embed pending chunks.

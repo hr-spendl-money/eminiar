@@ -4,7 +4,8 @@ import { log } from "./shell.js";
 
 /**
  * Re-run the installer against the latest package. Dev installs (packed from a
- * checkout) are re-packed from that checkout; registry installs pull `latest`.
+ * checkout) are re-packed from that checkout even when the version number has not
+ * changed; registry installs pull `latest`. Previous choices (statusline) are kept.
  */
 export async function upgrade(): Promise<number> {
   const rec = readInstallRecord();
@@ -12,7 +13,14 @@ export async function upgrade(): Promise<number> {
     log.warn("no previous install found; running a fresh install");
     return install({ yes: true });
   }
-  const spec =
-    rec.fromSpec.startsWith("pack:") || rec.fromSpec === "self" ? undefined : "eminiar@latest";
-  return install({ yes: true, method: rec.method, noModel: false, spec, node: rec.node });
+  const fromCheckout = rec.fromSpec.startsWith("pack:") || rec.fromSpec === "self";
+  return install({
+    yes: true,
+    method: rec.method,
+    noModel: false,
+    spec: fromCheckout ? undefined : "eminiar@latest",
+    force: fromCheckout,
+    node: rec.node,
+    statusline: !!rec.wrote.statusline,
+  });
 }

@@ -8,7 +8,7 @@ const USAGE = `eminiar v${version()} — local-first context, memory & knowledge
 Usage: eminiar <command> [options]
 
 Setup
-  install [--no-model] [--method plugin|settings] [--team] [--yes]   Install into Claude Code
+  install [--no-model] [--method plugin|settings] [--team] [--yes] [--force]   Install into Claude Code
   upgrade                      Update to the latest version and re-register
   uninstall [--purge-data]     Remove from Claude Code (data kept unless --purge-data)
   doctor [--json]              Check installation health
@@ -55,11 +55,13 @@ const commands: Record<string, Command> = {
         node: { type: "string" },
         yes: { type: "boolean" },
         statusline: { type: "boolean" },
+        force: { type: "boolean" },
       },
       strict: false,
     });
     const { install } = await import("./install/install.js");
     return install({
+      force: !!values.force,
       noModel: !!values["no-model"],
       method:
         values.method === "settings"
@@ -71,7 +73,8 @@ const commands: Record<string, Command> = {
       marketplace: typeof values.marketplace === "string" ? values.marketplace : undefined,
       node: typeof values.node === "string" ? values.node : undefined,
       yes: !!values.yes,
-      statusline: !!values.statusline,
+      // undefined keeps the `--yes` default; an explicit flag always opts in
+      statusline: values.statusline === true ? true : undefined,
     });
   },
 

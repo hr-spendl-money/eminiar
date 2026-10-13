@@ -30,7 +30,6 @@
     "hooks",
     "skills",
     ".claude-plugin",
-    ".mcp.json",
     "vendor",
     "queries",
     "eminiar.config.schema.json",
