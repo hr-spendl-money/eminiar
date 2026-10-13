@@ -1,11 +1,11 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getContext, type ProjectContext } from "../context.js";
-import { vectorRanker } from "../embeddings/queue.js";
+import { kickEmbedding, vectorRanker } from "../embeddings/queue.js";
 import { nodeLabel } from "../graph/format.js";
 import { coupled, dependencies, hotspots, impact, neighbors, orphans } from "../graph/query.js";
-import { indexContent } from "../index/indexer.js";
 import { fullDoctor } from "../install/doctor.js";
+import { list, read, reconcile, remove, write } from "../memory/store.js";
 import { paths } from "../paths.js";
 import { search } from "../search/pipeline.js";
 import { getCurrentSession } from "../session/current.js";
@@ -92,23 +92,41 @@ export async function searchPayload(
 }
 
 export function memoriesPayload(ctx: ProjectContext) {
-  return getStorage(ctx).memoryList({ limit: 500 });
-}
-
-export function addMemory(ctx: ProjectContext, kind: string, content: string) {
   const db = getStorage(ctx);
-  const doc = indexContent(db, {
-    source: "memory",
-    title: `${kind}: ${content.slice(0, 60)}`,
-    content,
-    kind: "prose",
-    meta: { kind },
-  });
-  return db.memoryInsert({ kind, content, documentId: doc.documentId, sessionId: "dashboard" });
+  reconcile(ctx, db);
+  return list(ctx, db, { limit: 500 }).map((r) => ({
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    content: r.content,
+    tags: r.tags ? (JSON.parse(r.tags) as string[]) : [],
+    path: r.path,
+    created_at: r.created_at,
+    updated_at: r.updated_at ?? r.created_at,
+  }));
 }
 
-export function deleteMemory(ctx: ProjectContext, id: number) {
-  getStorage(ctx).memoryDelete(id);
+export function memoryBody(ctx: ProjectContext, name: string) {
+  const m = read(ctx, getStorage(ctx), name);
+  return m ? { ...m, row: undefined } : undefined;
+}
+
+export function addMemory(ctx: ProjectContext, kind: string, content: string, name?: string) {
+  const db = getStorage(ctx);
+  reconcile(ctx, db);
+  const r = write(ctx, db, { kind, content, name, sessionId: "dashboard" });
+  kickEmbedding(ctx, db);
+  return { id: r.row.id, name: r.name, path: r.path };
+}
+
+/** By row id (old UI) or by name; file-backed memories lose their file too. */
+export function deleteMemory(ctx: ProjectContext, ref: number | string) {
+  const db = getStorage(ctx);
+  if (typeof ref === "string") return remove(ctx, db, ref);
+  const row = db.memoryGet(ref);
+  if (row?.name) return remove(ctx, db, row.name);
+  db.memoryDelete(ref);
+  return !!row;
 }
 
 export function graphPayload(ctx: ProjectContext, node: string, mode: string, limit: number) {

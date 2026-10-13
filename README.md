@@ -13,7 +13,9 @@ that make it work better:
   never blocks on the model download.
 - **Session continuity** — hooks capture prompts, decisions, constraints, files, errors and loops
   into 23 categories; a ≤2 KB Session Guide is snapshotted before `/compact` and replayed on resume.
-- **Memory** — `em_remember` / `em_recall`: decisions and constraints that survive sessions.
+- **Memory** — `em_remember` / `em_recall` / `em_memory`: named markdown memories under
+  `.eminiar/memories/<topic>/<name>.md` (human-editable, committed with the repo), mirrored into
+  the search index and the graph. `/em-onboard` writes the onboarding set.
 - **Knowledge graph** — `em_graph_impact`, `em_graph_query`, `em_graph_add`: tree-sitter
   (TS/JS) symbols, imports and calls + git co-change coupling and hotspots + curated concepts.
 - **Stats** — `em_stats`, a statusline, and a local web dashboard (`eminiar serve`).
@@ -45,7 +47,8 @@ The plugin injects short routing guidance at session start. Slash commands: `/em
 | `em_execute_file {path, code}` | big files; your code gets `$EM_FILE` |
 | `em_fetch_and_index {url, queries}` | docs and web pages (24 h cache) |
 | `em_search {queries, sort}` | anything indexed, `sort: "timeline"` after a resume |
-| `em_recall {query}` / `em_remember {content, kind}` | past decisions, constraints, errors |
+| `em_recall {query}` / `em_remember {content, kind, name?}` | past decisions, constraints, errors |
+| `em_memory {action: list \| read \| edit \| rename \| delete, name}` | the memory files themselves |
 | `em_graph_impact {node}` | what breaks if a file/symbol changes, and why |
 | `em_graph_query {preset: "hotspots" \| "coupled" \| "orphans"}` | where change concentrates |
 | `em_stats`, `em_doctor`, `em_reindex`, `em_purge` | housekeeping |
@@ -61,12 +64,37 @@ Permissions: shell snippets are checked against Claude Code's `permissions.deny`
 rules per chained segment; `ask` counts as deny. Sandboxed processes get a stripped environment
 plus credential passthrough for gh / aws / gcloud / kubectl / docker.
 
+## Memories
+
+`em_remember` writes `.eminiar/memories/<topic>/<name>.md` with a small header:
+
+```markdown
+---
+name: auth/session-tokens
+kind: decision
+tags: [auth, security]
+related: [file:src/auth.ts, sym:src/auth.ts#issueToken]
+created: 2026-10-13T15:00:00Z
+updated: 2026-10-13T15:04:11Z
+---
+
+Tokens rotate every 15 minutes because …
+```
+
+The files are the source of truth: edit, move or delete them by hand and the next memory call
+re-imports them (`em_reindex {scope: "memories"}` forces it). Each file is indexed for hybrid
+search (`em_recall`, `em_search {source: "memory"}`) and becomes a `memory:<name>` graph node whose
+`mentions` edges make `em_graph_impact` list the memories to re-read before changing a file.
+Commit the directory so teammates share it. Rows recorded before 0.1.2 are migrated into files
+on first use. `/em-onboard` writes `onboarding/{overview,structure,commands,conventions}`, which
+every session start points at until they exist.
+
 ## Configuration
 
 `~/.eminiar/config.json` (user) < `<project>/eminiar.config.json` (team, commit it) < `EMINIAR_*` env.
 See `eminiar.config.schema.json` for every key: `routing`, `sandbox` (timeouts, output cap, env
 allowlist, disabled languages), `search`, `embeddings`, `graph.include/exclude`, `git.maxCommits`,
-`index.docs`, `permissions.extraDeny`.
+`index.docs`, `permissions.extraDeny`, `memories.dir` (default `.eminiar/memories`).
 
 All data lives in `~/.eminiar/`: one SQLite DB per project (`projects/<id>/eminiar.db`), a global DB
 for lifetime stats and the fetch cache, the embedding model under `models/`, and the stable plugin

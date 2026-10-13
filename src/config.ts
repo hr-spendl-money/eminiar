@@ -81,6 +81,12 @@ export const ConfigSchema = z.object({
       extraDeny: z.array(z.string()).default([]),
     })
     .prefault({}),
+  memories: z
+    .object({
+      /** Project-relative directory of markdown memory files (`<topic>/<name>.md`); commit it. */
+      dir: z.string().default(".eminiar/memories"),
+    })
+    .prefault({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

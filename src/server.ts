@@ -69,6 +69,12 @@ const warm = setTimeout(async () => {
     const ctx = getContext();
     const db = getStorage(ctx);
     const { reindexCode, reindexGitSignals } = await import("./graph/reindex.js");
+    const { reconcile } = await import("./memory/store.js");
+    try {
+      reconcile(ctx, db);
+    } catch (err) {
+      process.stderr.write(`eminiar: memory reconcile skipped: ${(err as Error).message}\n`);
+    }
     await reindexCode(ctx, db);
     try {
       reindexGitSignals(ctx, db);

@@ -134,15 +134,17 @@ export const subagentStop: HookHandler = (input) => {
   const { db, sessionId } = open(input);
   const msg = input.last_assistant_message ?? "";
   if (!msg.trim()) return undefined;
-  db.eventInsert({
+  // Through persist() so the findings are indexed (source "session") for em_recall.
+  persist(
+    db,
     sessionId,
-    category: "agent_findings",
-    priority: 2,
-    payload: {
-      agent: input.agent_type ?? input.agent_id,
-      text: clip(msg.replace(/\s+/g, " "), 1000),
-    },
-  });
+    withPriority(sessionId, [
+      ev("agent_findings", {
+        agent: input.agent_type ?? input.agent_id,
+        text: clip(msg.replace(/\s+/g, " "), 1000),
+      }),
+    ]),
+  );
   return undefined;
 };
 

@@ -7,6 +7,7 @@ import { getContext, resetContextCache } from "../../src/context.js";
 import { handlers } from "../../src/hooks/index.js";
 import { suggest } from "../../src/hooks/routing.js";
 import type { HookInput } from "../../src/hooks/types.js";
+import { search } from "../../src/search/pipeline.js";
 import { renderWithin } from "../../src/session/guide.js";
 import { liveServers, markServerAlive } from "../../src/session/server-alive.js";
 import { closeAllStorage, getStorage } from "../../src/storage/index.js";
@@ -160,6 +161,22 @@ describe("hook handlers end to end", () => {
     );
     expect(resume?.hookSpecificOutput?.additionalContext).toContain("## Session Guide (eminiar)");
     expect(db.snapshotLatestUnconsumed("s1")).toBeUndefined();
+  });
+});
+
+describe("subagent findings", () => {
+  it("indexes SubagentStop messages so em_recall can find them", async () => {
+    await handlers.SubagentStop!(
+      base({
+        hook_event_name: "SubagentStop",
+        agent_type: "Explore",
+        last_assistant_message: "The leak is in pool.ts where connections are never released.",
+      }),
+    );
+    const db = getStorage(getContext(root), { vectors: false });
+    const r = await search(db, "pool leak", { mode: "lexical", filters: { source: ["session"] } });
+    expect(r.hits.some((h) => h.chunk.body.includes("pool.ts"))).toBe(true);
+    expect(r.hits[0]?.chunk.document.title).toBe("agent_findings");
   });
 });
 

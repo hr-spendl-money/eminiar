@@ -1,5 +1,6 @@
-/** Node id conventions: `file:<rel>`, `sym:<rel>#<Outer.inner>`, `pkg:<name>`, `person:<name>`, `concept:<slug>`. */
+/** Node id conventions: `file:<rel>`, `sym:<rel>#<Outer.inner>`, `pkg:<name>`, `person:<name>`, `concept:<slug>`, `memory:<topic/name>`. */
 export const fileId = (rel: string): string => `file:${rel}`;
+export const memoryId = (name: string): string => `memory:${name}`;
 export const symId = (rel: string, name: string): string => `sym:${rel}#${name}`;
 export const pkgId = (name: string): string => `pkg:${name}`;
 export const personId = (name: string): string => `person:${name}`;

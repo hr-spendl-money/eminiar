@@ -10,6 +10,7 @@ import {
   graphPayload,
   listProjects,
   memoriesPayload,
+  memoryBody,
   searchPayload,
   statsPayload,
 } from "./api.js";
@@ -56,14 +57,31 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
         return json(res, 200, await searchPayload(ctx(), q, mode, num("limit", 10)));
       }
       if (url.pathname === "/api/memories") {
+        const name = url.searchParams.get("name")?.trim();
         if (req.method === "POST") {
-          const body = JSON.parse(await readBody(req)) as { kind?: string; content?: string };
+          const body = JSON.parse(await readBody(req)) as {
+            kind?: string;
+            content?: string;
+            name?: string;
+          };
           if (!body.content?.trim()) return json(res, 400, { error: "content required" });
-          return json(res, 200, { id: addMemory(ctx(), body.kind ?? "fact", body.content.trim()) });
+          try {
+            return json(
+              res,
+              200,
+              addMemory(ctx(), body.kind ?? "fact", body.content.trim(), body.name?.trim()),
+            );
+          } catch (err) {
+            return json(res, 400, { error: (err as Error).message });
+          }
         }
         if (req.method === "DELETE") {
-          deleteMemory(ctx(), num("id", 0));
+          deleteMemory(ctx(), name || num("id", 0));
           return json(res, 200, { ok: true });
+        }
+        if (name) {
+          const m = memoryBody(ctx(), name);
+          return m ? json(res, 200, m) : json(res, 404, { error: "not found" });
         }
         return json(res, 200, memoriesPayload(ctx()));
       }

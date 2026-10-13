@@ -69,7 +69,8 @@ export function impact(
     hits.set(key, h);
   };
 
-  let frontier = expand(db, root);
+  const start = expand(db, root);
+  let frontier = start;
   const seen = new Set(frontier);
   for (let hop = 1; hop <= depth; hop++) {
     const incoming = db.graphEdgesTo(frontier, kinds);
@@ -90,6 +91,12 @@ export function impact(
     // Members of affected files also matter at the next hop.
     frontier = next;
     if (!frontier.length) break;
+  }
+  // Memories (.eminiar/memories) that mention the node or one of its symbols are
+  // context to re-read before changing it, so they surface alongside dependents.
+  for (const e of db.graphEdgesTo(start, ["mentions"])) {
+    const via = e.dst === root.id ? root.name : e.dst.replace(/^sym:[^#]*#/, "");
+    add(e.src, 0.5 * e.confidence, 1, `memory mentions ${via}`);
   }
   if (opts.includeGit !== false) {
     const file = toFile(root.id);
