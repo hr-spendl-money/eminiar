@@ -6,8 +6,8 @@ import {
   type InstallRecord,
   type Json,
   marketplaceKnown,
-  pluginInstallPath,
   pluginInstalled,
+  pluginInstallPath,
   readJson,
   settingsPath,
   writeJsonWithBackup,
@@ -27,7 +27,14 @@ const HOOK_EVENTS = [
 ];
 
 /** Files whose content must match between the stable copy and Claude Code's cached copy. */
-const CACHE_FINGERPRINT = ["dist/server.js", "dist/hook.js", ".claude-plugin/plugin.json"];
+const CACHE_FINGERPRINT = [
+  "dist/server.js",
+  "dist/hook.js",
+  ".claude-plugin/plugin.json",
+  "bin/_resolve.sh",
+  "bin/em-server",
+  "bin/em-hook",
+];
 
 function fileHash(file: string): string | undefined {
   try {
@@ -35,6 +42,21 @@ function fileHash(file: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Run `bin/em-server --probe` from a package root. Success proves that copy can resolve
+ * and load its dependencies the way Claude Code will launch it; undefined means ok.
+ */
+export function probeServer(root: string): string | undefined {
+  const bin = join(root, "bin", "em-server");
+  if (!existsSync(bin)) return "bin/em-server is missing";
+  const r = run(bin, ["--probe"], { timeoutMs: 20_000 });
+  if (r.ok && / ok /.test(r.stdout)) return undefined;
+  // Node prints a stack with "Node.js vX" last; the useful line names the error or our shim.
+  const lines = (r.stderr || r.stdout).trim().split("\n").filter(Boolean);
+  const why = lines.find((l) => /Error|eminiar:/.test(l)) ?? lines.pop() ?? "no output";
+  return `cannot start (${why.trim().slice(-220)})`;
 }
 
 /**
@@ -53,6 +75,10 @@ export function pluginCacheStale(stable: string): string | undefined {
   // with ENOENT because ${CLAUDE_PLUGIN_ROOT} is empty there.
   if (existsSync(join(cache, ".mcp.json")) && !existsSync(join(stable, ".mcp.json")))
     return ".mcp.json is present in the cache but not in the stable copy";
+  // Content matches; now prove the copy actually starts from where Claude Code runs it.
+  // The cache has no node_modules, so this exercises the root-path fallback in bin/_resolve.sh.
+  const probe = probeServer(cache);
+  if (probe) return `cached copy ${probe}`;
   return undefined;
 }
 

@@ -16,6 +16,8 @@ export interface EminiarPaths {
   globalDb: string;
   configFile: string;
   nodePathFile: string;
+  /** Package root the bin/ shims fall back to when their own copy has no node_modules. */
+  rootPathFile: string;
   installFile: string;
   hookLog: string;
   statuslineCache: string;
@@ -32,6 +34,7 @@ export function paths(): EminiarPaths {
     globalDb: join(home, "global.db"),
     configFile: join(home, "config.json"),
     nodePathFile: join(home, "node-path"),
+    rootPathFile: join(home, "root-path"),
     installFile: join(home, "install.json"),
     hookLog: join(home, "hook.log"),
     statuslineCache: join(home, "statusline.cache"),

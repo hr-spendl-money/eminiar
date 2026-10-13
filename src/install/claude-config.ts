@@ -1,4 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { paths } from "../paths.js";
@@ -71,13 +78,59 @@ export function pluginInstalled(id: string): boolean {
 /** Where Claude Code copied the plugin to (its cache); undefined when not installed. */
 export function pluginInstallPath(id: string): string | undefined {
   try {
-    const reg = JSON.parse(
-      readFileSync(join(pluginsDir(), "installed_plugins.json"), "utf8"),
-    ) as { plugins?: Record<string, { installPath?: string }[]> };
+    const reg = JSON.parse(readFileSync(join(pluginsDir(), "installed_plugins.json"), "utf8")) as {
+      plugins?: Record<string, { installPath?: string }[]>;
+    };
     return reg.plugins?.[id]?.[0]?.installPath;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Every version directory Claude Code has cached for the plugin, oldest first. The
+ * registered one is `pluginInstallPath()`; the rest are leftovers from earlier versions.
+ */
+export function pluginCacheDirs(marketplace = "eminiar", plugin = "eminiar"): string[] {
+  const dir = join(pluginsDir(), "cache", marketplace, plugin);
+  try {
+    return readdirSync(dir)
+      .filter((v) => existsSync(join(dir, v, "bin", "em-server")))
+      .sort()
+      .map((v) => join(dir, v));
+  } catch {
+    return [];
+  }
+}
+
+/** How Claude Code names the plugin's MCP server in its own state files. */
+export const PLUGIN_SERVER_ID = "plugin:eminiar:eminiar";
+
+export const mcpNeedsAuthPath = (): string => join(claudeDir(), "mcp-needs-auth-cache.json");
+
+/**
+ * Claude Code records a plugin server that failed to connect here and skips it for
+ * about 15 minutes ("retries automatically"). Present means the last launch died.
+ */
+export function needsAuthEntry(id = PLUGIN_SERVER_ID): { timestamp: number } | undefined {
+  try {
+    const entry = readJson(mcpNeedsAuthPath())[id] as { timestamp?: unknown } | undefined;
+    return entry && typeof entry.timestamp === "number"
+      ? { timestamp: entry.timestamp }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Remove only our entry so the next Claude Code session retries immediately. */
+export function clearNeedsAuthEntry(id = PLUGIN_SERVER_ID): boolean {
+  const file = mcpNeedsAuthPath();
+  const obj = readJson(file);
+  if (!(id in obj)) return false;
+  delete obj[id];
+  writeJsonWithBackup(file, obj);
+  return true;
 }
 
 export function marketplaceKnown(name: string): boolean {

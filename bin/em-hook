@@ -1,17 +1,15 @@
 #!/bin/sh
-# Hook entry shim. Resolves the Node binary pinned at install time so hooks keep
-# working regardless of the PATH Claude Code was launched with (nvm, volta, ...).
+# Hook entry shim. Node and package-root resolution live in _resolve.sh.
 # A hook must never block Claude: if nothing can run, print an empty JSON object.
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
-NODE=""
-if [ -f "$HOME/.eminiar/node-path" ]; then
-  NODE="$(cat "$HOME/.eminiar/node-path" 2>/dev/null)"
-fi
+. "$(dirname "$0")/_resolve.sh"
 if [ ! -x "$NODE" ]; then
-  NODE="$(command -v node 2>/dev/null)"
-fi
-if [ ! -x "$NODE" ]; then
+  echo "eminiar hook: no node binary found (run: npx eminiar install)" >&2
   echo '{}'
   exit 0
 fi
-exec "$NODE" "$DIR/dist/hook.js" "$@"
+if [ -z "$RUN" ]; then
+  echo "eminiar hook: $DIR has no node_modules and no stable copy is pinned (run: npx eminiar install)" >&2
+  echo '{}'
+  exit 0
+fi
+exec "$NODE" "$RUN/dist/hook.js" "$@"

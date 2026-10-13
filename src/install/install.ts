@@ -6,10 +6,17 @@ import { ensureDirs } from "../paths.js";
 import { resolveProjectRoot } from "../project.js";
 import { globalDb } from "../stats/global.js";
 import { version } from "../version.js";
-import { type Json, readJson, writeInstallRecord, writeJsonWithBackup } from "./claude-config.js";
+import {
+  clearNeedsAuthEntry,
+  type Json,
+  needsAuthEntry,
+  readJson,
+  writeInstallRecord,
+  writeJsonWithBackup,
+} from "./claude-config.js";
 import { fullDoctor } from "./doctor.js";
 import { downloadModel, materialize, nativeCheck, rebuildNative } from "./materialize.js";
-import { pinNode } from "./node-resolve.js";
+import { pinNode, pinRoot } from "./node-resolve.js";
 import { registerPlugin, registerSettings, setStatusline } from "./register.js";
 import { claudeCli, confirm, log } from "./shell.js";
 
@@ -36,6 +43,10 @@ export async function install(opts: InstallOptions): Promise<number> {
 
   log.step("stable copy");
   const { root: stable, fromSpec } = materialize(opts.spec, !!opts.force);
+  // Claude Code's plugin cache copies dist/ but not node_modules/; the bin/ shims run
+  // this pinned copy instead when they are launched from such a directory.
+  pinRoot(stable);
+  log.ok(`pinned as root-path (the bin/ shims fall back to it from Claude Code's plugin cache)`);
 
   log.step("native modules");
   let failures = nativeCheck(node.path, stable);
@@ -99,6 +110,10 @@ export async function install(opts: InstallOptions): Promise<number> {
       "hooks written to ~/.claude/settings.json, MCP server to ~/.claude.json, skills to ~/.claude/skills",
     );
   }
+  // A previous launch that died (e.g. the cache copy before root-path existed) is remembered
+  // by Claude Code for ~15 minutes. Forget it so the next session connects straight away.
+  if (needsAuthEntry() && clearNeedsAuthEntry())
+    log.ok("cleared Claude Code's cached connection failure for the plugin server");
   // Fresh `--yes` installs opt in; an explicit value (upgrade replays the previous choice) wins.
   const wantStatusline = opts.statusline ?? (!!opts.yes && !opts.team);
   if (wantStatusline) {

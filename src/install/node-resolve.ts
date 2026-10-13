@@ -1,4 +1,5 @@
-import { accessSync, constants, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ensureDirs } from "../paths.js";
 import { run } from "./shell.js";
 
@@ -38,6 +39,28 @@ export function pinnedNode(): PinnedNode | undefined {
     const path = readFileSync(ensureDirs().nodePathFile, "utf8").trim();
     const version = versionOf(path);
     return version ? { path, version } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Pin the package root whose dist/ the bin/ shims run when their own directory
+ * cannot resolve dependencies (Claude Code's plugin cache copies dist/ but not
+ * node_modules/). Written to ~/.eminiar/root-path; read by bin/_resolve.sh.
+ */
+export function pinRoot(root: string): string {
+  if (!existsSync(join(root, "dist", "server.js")))
+    throw new Error(`${root} has no dist/server.js; cannot pin it as the stable root`);
+  writeFileSync(ensureDirs().rootPathFile, root);
+  return root;
+}
+
+/** The pinned root, or undefined when missing or no longer runnable. */
+export function pinnedRoot(): string | undefined {
+  try {
+    const root = readFileSync(ensureDirs().rootPathFile, "utf8").trim();
+    return root && existsSync(join(root, "dist", "server.js")) ? root : undefined;
   } catch {
     return undefined;
   }

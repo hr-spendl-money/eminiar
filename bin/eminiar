@@ -1,15 +1,12 @@
 #!/bin/sh
-# CLI shim. Prefers the pinned Node, falls back to whatever is on PATH.
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
-NODE=""
-if [ -f "$HOME/.eminiar/node-path" ]; then
-  NODE="$(cat "$HOME/.eminiar/node-path" 2>/dev/null)"
-fi
-if [ ! -x "$NODE" ]; then
-  NODE="$(command -v node 2>/dev/null)"
-fi
+# CLI shim. Node and package-root resolution live in _resolve.sh.
+. "$(dirname "$0")/_resolve.sh"
 if [ ! -x "$NODE" ]; then
   echo "eminiar: node >= 22.12 is required" >&2
   exit 1
 fi
-exec "$NODE" "$DIR/dist/cli.js" "$@"
+if [ -z "$RUN" ]; then
+  echo "eminiar: $DIR has no node_modules and no stable copy is pinned in $EM_HOME/root-path (run: npx eminiar install)" >&2
+  exit 1
+fi
+exec "$NODE" "$RUN/dist/cli.js" "$@"

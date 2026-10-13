@@ -11,7 +11,8 @@ Setup
   install [--no-model] [--method plugin|settings] [--team] [--yes] [--force]   Install into Claude Code
   upgrade                      Update to the latest version and re-register
   uninstall [--purge-data]     Remove from Claude Code (data kept unless --purge-data)
-  doctor [--json]              Check installation health
+  doctor [--json] [--fix]      Check installation health; --fix re-pins node/root and clears
+                               Claude Code's cached launch failure
   replace-context-mode [--yes] Remove the context-mode plugin after parity sign-off
 
 Use
@@ -36,9 +37,13 @@ function text(r: { content: Array<{ text: string }> }): string {
 
 const commands: Record<string, Command> = {
   async doctor(args) {
-    const { values } = parseArgs({ args, options: { json: { type: "boolean" } }, strict: false });
+    const { values } = parseArgs({
+      args,
+      options: { json: { type: "boolean" }, fix: { type: "boolean" } },
+      strict: false,
+    });
     const { fullDoctor } = await import("./install/doctor.js");
-    const checks = await fullDoctor();
+    const checks = await fullDoctor({ fix: !!values.fix });
     if (values.json) console.log(JSON.stringify(checks, null, 2));
     else console.log(formatDoctor(checks));
     return checks.every((c) => c.ok) ? 0 : 1;

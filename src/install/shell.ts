@@ -13,13 +13,14 @@ export interface RunOut {
 export function run(
   cmd: string,
   args: string[],
-  opts: { cwd?: string; env?: NodeJS.ProcessEnv; quiet?: boolean } = {},
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; quiet?: boolean; timeoutMs?: number } = {},
 ): RunOut {
   const r = spawnSync(cmd, args, {
     cwd: opts.cwd,
     env: opts.env ?? process.env,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
+    timeout: opts.timeoutMs,
   });
   if (r.error) return { ok: false, stdout: "", stderr: r.error.message, status: null };
   return { ok: r.status === 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status };
