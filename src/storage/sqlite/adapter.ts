@@ -407,6 +407,12 @@ export class SqliteAdapter implements StorageAdapter {
       | undefined;
   }
 
+  sessionsRecent(limit: number): SessionRow[] {
+    return this.db
+      .prepare("SELECT * FROM sessions ORDER BY COALESCE(started_at, 0) DESC LIMIT ?")
+      .all(limit) as SessionRow[];
+  }
+
   eventInsert(e: EventInput): number {
     const info = this.db
       .prepare(

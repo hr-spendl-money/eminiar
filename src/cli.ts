@@ -23,7 +23,8 @@ Use
   stats [--lifetime]           Context savings
   recall ["<q>"]               Memories and session history
   purge <index|sessions|graph|memories|all> --yes
-  serve [--port 7331] [--open] Local dashboard
+  ui [--port 7331] [--no-open] Web dashboard: stats, memories, graph, search, sessions, actions
+                               (alias: serve)
   statusline                   Claude Code statusLine command (reads JSON on stdin)
   hook [--event E]             Run the hook handler manually (reads JSON on stdin)
   version | help
@@ -269,6 +270,26 @@ const commands: Record<string, Command> = {
     return 0;
   },
 
+  /** `eminiar ui` opens the browser by default; `serve` (the older name) does not. */
+  async ui(args) {
+    const { values } = parseArgs({
+      args,
+      options: {
+        port: { type: "string" },
+        open: { type: "boolean" },
+        "no-open": { type: "boolean" },
+      },
+      strict: false,
+    });
+    const { serve } = await import("./ui/server.js");
+    await serve({
+      port: values.port ? Number(values.port) : 7331,
+      open: !values["no-open"],
+      root: getContext().root,
+    });
+    return 0;
+  },
+
   async serve(args) {
     const { values } = parseArgs({
       args,
@@ -276,7 +297,11 @@ const commands: Record<string, Command> = {
       strict: false,
     });
     const { serve } = await import("./ui/server.js");
-    await serve({ port: values.port ? Number(values.port) : 7331, open: !!values.open });
+    await serve({
+      port: values.port ? Number(values.port) : 7331,
+      open: !!values.open,
+      root: getContext().root,
+    });
     return 0;
   },
 

@@ -18,7 +18,8 @@ that make it work better:
   the search index and the graph. `/em-onboard` writes the onboarding set.
 - **Knowledge graph** — `em_graph_impact`, `em_graph_query`, `em_graph_add`: tree-sitter
   (TS/JS) symbols, imports and calls + git co-change coupling and hotspots + curated concepts.
-- **Stats** — `em_stats`, a statusline, and a local web dashboard (`eminiar serve`).
+- **Stats** — `em_stats`, a statusline, and a local web dashboard (`eminiar ui`) for stats,
+  memories, the graph, search, sessions and maintenance actions.
 
 ## Install
 
@@ -106,8 +107,15 @@ copy under `plugin/`.
 eminiar search "query" [--timeline] [--code] [--source X]
 eminiar graph impact src/foo.ts | deps | neighbors | path a b | hotspots | coupled | orphans
 eminiar index docs/ | reindex [--scope code|git|docs|embeddings|all]
-eminiar stats | recall "query" | serve --open | statusline
+eminiar stats | recall "query" | ui [--port 7331] [--no-open] | statusline
 ```
+
+`eminiar ui` opens the local dashboard (127.0.0.1 only): token savings per session, project and
+lifetime; a memory browser and editor (create, edit, rename, delete `.eminiar/memories` files);
+an interactive knowledge graph (project map, neighbourhood, impact and dependency views, hotspots,
+co-changing pairs, orphans); hybrid search; per-session event timelines; the doctor checks; and
+system actions (reindex, index a path, embed pending chunks, reconcile memories, doctor `--fix`,
+purge). `serve` is the older name for the same command.
 
 Add `"statusLine": {"type": "command", "command": "eminiar statusline"}` to `~/.claude/settings.json`
 (or pass `--statusline` to `install`) for `eminiar · 12.3k saved · 1.1M lifetime · 87% efficient`.
