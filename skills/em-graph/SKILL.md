@@ -21,6 +21,8 @@ Arguments: $ARGUMENTS
 - `status` → `em_index_status`: HEAD vs indexed commit, files changed since indexed, skipped files.
 - A bare name → `em_graph_query { query }` to find the node first.
 - "remember that X relates to Y" → `em_graph_add`.
+- "why did this change" / "what broke after" / "who knows this file" → `/em-history` (`em_history`):
+  the graph says what a change reaches, the history says what changes like it did before.
 
 Present the ranked list with the reasons the tool gives; do not re-derive them from source. Hotspot
 scores and clusters are signals, not quality grades or boundary claims. Before saying "nothing calls

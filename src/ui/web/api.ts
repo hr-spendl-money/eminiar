@@ -381,3 +381,190 @@ export interface MemoryBody {
   body: string;
   path: string;
 }
+
+// --- history ---------------------------------------------------------------------------
+
+export type Bucket = "feat" | "fix" | "refactor" | "perf" | "test" | "docs" | "other";
+export interface CommitRowUi {
+  sha: string;
+  short: string;
+  parents: string[];
+  merge: boolean;
+  onHead: boolean;
+  author: string;
+  at: number;
+  subject: string;
+  refs: string[];
+  tags: string[];
+  kind: string;
+  bucket: Bucket;
+  scope?: string;
+  breaking: boolean;
+  issues: string[];
+  pr?: number;
+  files: number;
+  added: number;
+  deleted: number;
+  size: string;
+  blamedBy: number;
+  origins: number;
+  reverted: boolean;
+  risk: number;
+  riskReasons: string[];
+}
+export interface FileHistoryUi {
+  path: string;
+  commits: number;
+  fixes: number;
+  feats: number;
+  refactors: number;
+  reverts: number;
+  firstAt: number;
+  lastAt: number;
+  authors: Array<[string, number]>;
+  added: number;
+  deleted: number;
+  bugOrigins: number;
+  quickFixes: number;
+  commits90d: number;
+  months: number[];
+  risk: number;
+  reasons: string[];
+  renamedFrom?: string;
+}
+export interface BranchUi {
+  name: string;
+  sha: string;
+  at: number;
+  remote: boolean;
+  current: boolean;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  merged: boolean;
+  isDefault: boolean;
+  lastAuthor?: string;
+  lastSubject?: string;
+}
+export interface WeekUi {
+  week: string;
+  at: number;
+  total: number;
+  byBucket: Record<Bucket, number>;
+  added: number;
+  deleted: number;
+}
+export interface AuthorUi {
+  name: string;
+  commits: number;
+  fixes: number;
+  files: number;
+  firstAt: number;
+  lastAt: number;
+  added: number;
+  deleted: number;
+}
+export interface HistoryOverview {
+  git: boolean;
+  error?: string;
+  head: string;
+  branch?: string;
+  base?: string;
+  builtAt: number;
+  range: { from: number; to: number };
+  stats: {
+    commits: number;
+    onHead: number;
+    fixes: number;
+    reverts: number;
+    merges: number;
+    authors: number;
+    files: number;
+    fixesTraced: number;
+    linksTraced: number;
+    tracePending: number;
+    last30: number;
+    prior30: number;
+    branches: number;
+    remoteBranches: number;
+    unmerged: number;
+    tags: number;
+    workingTree: number;
+  };
+  kinds: Record<string, number>;
+  buckets: Bucket[];
+  weeks: WeekUi[];
+  authors: AuthorUi[];
+  tags: Array<{ name: string; sha: string; at: number }>;
+  branches: BranchUi[];
+  lessons: string[];
+  risky: FileHistoryUi[];
+  notable: CommitRowUi[];
+}
+export interface CommitLinkUi extends Partial<CommitRowUi> {
+  sha: string;
+  short: string;
+  subject: string;
+  paths: string[];
+}
+export interface CommitDetailUi {
+  git: boolean;
+  error?: string;
+  commit: CommitRowUi & { body: string; email: string; revertOf?: string; revertedBy?: string };
+  files: Array<{
+    path: string;
+    added: number;
+    deleted: number;
+    binary: boolean;
+    renamedFrom?: string;
+    symbols: Array<{ id: string; name: string; kind: string; line: number | null }>;
+    stale: boolean;
+    fileRisk: number;
+    fileFixes: number;
+  }>;
+  blamedBy: CommitLinkUi[];
+  origins: CommitLinkUi[];
+  revertedBy: CommitLinkUi | null;
+  branches: string[];
+}
+export interface FileHistoryDetailUi {
+  git: boolean;
+  path: string;
+  file: FileHistoryUi | null;
+  commits: CommitRowUi[];
+  origins: Array<CommitRowUi & { fixes: Array<CommitRowUi & { daysLater: number }> }>;
+}
+export interface GraphCommitUi extends CommitRowUi {
+  allParents: string[];
+}
+export interface HistoryGraphUi {
+  git: boolean;
+  base?: string;
+  head: string;
+  commits: GraphCommitUi[];
+  branches: Array<{
+    name: string;
+    sha: string;
+    remote: boolean;
+    current: boolean;
+    isDefault: boolean;
+    merged: boolean;
+  }>;
+}
+export interface BranchDetailUi {
+  git: boolean;
+  error?: string;
+  branch: BranchUi;
+  commits: CommitRowUi[];
+  files: Array<{ path: string; commits: number; risk: number; fixes: number }>;
+}
+export interface RiskUi {
+  git: boolean;
+  source: string;
+  files: Array<{
+    path: string;
+    file: FileHistoryUi | null;
+    lastFix: string | null;
+    origins: CommitRowUi[];
+  }>;
+}

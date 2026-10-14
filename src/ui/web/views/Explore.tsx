@@ -245,6 +245,7 @@ function SidePanel({
     <div class="panel right">
       <div class="head">
         {symbol ? "code details" : "file impact"} <span class="spacer" />
+        <a onClick={() => navigate("history", { file })}>history</a>
         <a onClick={() => navigate("galaxy", { node: symbol ? symbol.node.id : `file:${file}` })}>
           open in Galaxy →
         </a>

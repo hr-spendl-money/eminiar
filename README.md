@@ -36,9 +36,20 @@ that make it work better:
   `src/x.ts#Class.method`) with the body, and references, Serena-style but without language
   servers. Code search chunks are cut at declarations and titled by symbol. A database built by
   an older version gets one automatic full code reindex on first use.
+- **History** — `em_history`: the git history read for Claude, not by Claude. Every commit across
+  every branch is classified (feat/fix/refactor/perf/test/docs/…), branches carry ahead/behind and
+  merge state against the base, and every fix is traced back (by blaming the lines it removed) to
+  the commit that wrote them, so changes that later needed fixing are flagged and files get a
+  history-risk score with reasons. Ask it for a file before editing, for the working tree before
+  committing, for one commit, a branch, a symbol's line history or a search over messages, which
+  are also indexed for `em_search` (source `git`). The dashboard's **History** tab is the
+  interactive explorer: weekly activity by kind with a brush, the commit DAG with lanes, a
+  churn-vs-fix-share scatter, per-file stories, branch comparison and the lessons the history
+  teaches. `/em-history` is the slash command.
 - **Stats** — `em_stats`, a statusline, and a local web dashboard (`eminiar ui`): source explorer
   with impact and code details, a galaxy graph, architecture map, hotspots, routes, clusters,
-  decision record, documentation sources, index coverage, sessions and maintenance actions.
+  history explorer, decision record, documentation sources, index coverage, sessions and
+  maintenance actions.
 
 ## Install
 
@@ -58,7 +69,8 @@ separate, explicit choice).
 ## Using it from Claude Code
 
 The plugin injects short routing guidance at session start. Slash commands: `/em-stats`,
-`/em-doctor`, `/em-index`, `/em-search`, `/em-docs`, `/em-graph`, `/em-onboard`, `/em-purge`.
+`/em-doctor`, `/em-index`, `/em-search`, `/em-docs`, `/em-graph`, `/em-history`, `/em-onboard`,
+`/em-purge`.
 
 | Tool | Use for |
 |---|---|
@@ -77,6 +89,7 @@ The plugin injects short routing guidance at session start. Slash commands: `/em
 | `em_graph_changes {ref?}` | the symbols a diff touches, their exposure, and the files it can reach |
 | `em_graph_query {preset: "hotspots" \| "routes" \| "dead_code" \| "cycles" \| "clusters" \| "coupled" \| "orphans"}` | where change concentrates, what is exposed, what nothing uses |
 | `em_graph_query {pattern: {from, edge: {kinds, direction, depth}, to}}` | walk typed edges from a filter to a filter |
+| `em_history {action: overview \| file \| risk \| commit \| branch \| symbol \| search \| timeline}` | what changed, why, by whom; which changes later needed fixing; branch state; a file's story before editing it |
 | `em_index_status` | is the graph fresh, which files were skipped and why |
 | `em_stats`, `em_doctor`, `em_reindex`, `em_purge` | housekeeping |
 

@@ -5,6 +5,7 @@ export const VIEWS = [
   "explore",
   "galaxy",
   "architecture",
+  "history",
   "memory",
   "docs",
   "coverage",

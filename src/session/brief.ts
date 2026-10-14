@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectContext } from "../context.js";
 import { readManifest } from "../docs/manifest.js";
+import { readBriefSummary } from "../history/model.js";
 import { parseMemoryFile } from "../memory/frontmatter.js";
 import { memoriesDir } from "../memory/store.js";
 import type { StorageAdapter } from "../storage/adapter.js";
@@ -48,8 +49,23 @@ export function renderProjectBrief(
     // the manifest is optional
   }
 
+  const history = historyLine(db);
+  if (history) lines.push(history);
+
   if (freshness) lines.push(freshness);
   return fitBudget(lines, budget);
+}
+
+/** One line from the last history build (written by em_history / the dashboard; never computed here). */
+function historyLine(db: StorageAdapter): string | undefined {
+  const h = readBriefSummary(db);
+  if (!h) return undefined;
+  const parts = [
+    `History (em_history): ${h.commits} commits, ${h.commits90d} in 90d of which ${h.fixes90d} fixes`,
+  ];
+  if (h.risky.length) parts.push(`bug-prone: ${h.risky.join(", ")}`);
+  if (h.lesson) parts.push(h.lesson.replace(/\.$/, ""));
+  return `${parts.join("; ")}. em_history {action:"file", path} before editing, {action:"risk"} before committing.`;
 }
 
 function overviewParagraph(ctx: ProjectContext): string | undefined {
@@ -98,7 +114,7 @@ function fitBudget(lines: string[], budget: number): string {
   let out = lines.join("\n");
   while (out.length > budget && lines.length > 1) {
     // drop the least important line first: hot files, then decisions, then the overview
-    const order = ["Hot files", "Accepted decisions", "Project:"];
+    const order = ["History (", "Hot files", "Accepted decisions", "Project:"];
     const idx = lines.findIndex((l) => order.some((p) => l.startsWith(p)));
     if (idx === -1) break;
     lines.splice(idx, 1);
