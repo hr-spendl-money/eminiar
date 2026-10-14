@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { matchBash, type PermissionRules, parseRule, type Rule } from "./rules.js";
@@ -18,10 +18,24 @@ function readRules(file: string): Partial<Record<keyof PermissionRules, string[]
   }
 }
 
+/** mtime of a settings file, or -1 when it does not exist (so appearing later is a change). */
+function stamp(file: string): number {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return -1;
+  }
+}
+
+const cache = new Map<string, { stamps: number[]; rules: PermissionRules }>();
+
 /**
  * Claude Code's permission rules, merged from user, project and local settings,
  * plus eminiar's own `permissions.extraDeny`. The sandbox honours these so
  * `em_execute` cannot be used to sidestep a `Bash(sudo *)` deny.
+ *
+ * Every shell execution calls this, so the parsed rules are cached per root and
+ * revalidated with one stat() per file instead of a read + JSON.parse each time.
  */
 export function loadPermissionRules(root: string, extraDeny: string[] = []): PermissionRules {
   const files = [
@@ -29,6 +43,11 @@ export function loadPermissionRules(root: string, extraDeny: string[] = []): Per
     join(root, ".claude", "settings.json"),
     join(root, ".claude", "settings.local.json"),
   ];
+  const key = `${root}\0${extraDeny.join("\0")}`;
+  const stamps = files.map(stamp);
+  const hit = cache.get(key);
+  if (hit?.stamps.every((s, i) => s === stamps[i])) return hit.rules;
+
   const out: PermissionRules = { allow: [], deny: [], ask: [] };
   const push = (list: Rule[], raws: string[] | undefined) => {
     for (const raw of raws ?? []) {
@@ -43,6 +62,8 @@ export function loadPermissionRules(root: string, extraDeny: string[] = []): Per
     push(out.ask, p.ask);
   }
   push(out.deny, extraDeny);
+  if (cache.size >= 16) cache.clear();
+  cache.set(key, { stamps, rules: out });
   return out;
 }
 

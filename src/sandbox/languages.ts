@@ -36,8 +36,27 @@ function preferredShell(): string {
   return findOnPath("bash") ?? findOnPath("zsh") ?? "/bin/sh";
 }
 
+let tsxPath: string | undefined;
 function tsxCli(): string {
-  return require.resolve("tsx/cli");
+  tsxPath ??= require.resolve("tsx/cli");
+  return tsxPath;
+}
+
+const detectCache = new Map<string, { bin: string | undefined; at: number }>();
+const MISS_TTL_MS = 10_000;
+
+/**
+ * `detect()` memoised for the life of the process. Finding an interpreter walks every
+ * PATH entry with a stat each; a found binary is remembered for good (a vanished one
+ * surfaces as a spawn error), a missing one is re-checked after a short while so an
+ * install during the session is picked up.
+ */
+export function detectInterpreter(lang: Language): string | undefined {
+  const hit = detectCache.get(lang.id);
+  if (hit && (hit.bin !== undefined || Date.now() - hit.at < MISS_TTL_MS)) return hit.bin;
+  const bin = lang.detect();
+  detectCache.set(lang.id, { bin, at: Date.now() });
+  return bin;
 }
 
 export const LANGUAGES: Language[] = [
@@ -143,11 +162,23 @@ export function availableLanguages(): Array<{ id: string; bin: string | undefine
   });
 }
 
+let scratchDir: string | undefined;
+
 /** Write code to a scratch file under ~/.eminiar/tmp and return its path. */
 export function writeScratch(code: string, ext: string): string {
   const dir = paths().tmp;
-  mkdirSync(dir, { recursive: true });
+  if (scratchDir !== dir) {
+    mkdirSync(dir, { recursive: true });
+    scratchDir = dir;
+  }
   const file = join(dir, `em-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-  writeFileSync(file, code, { mode: 0o600 });
+  try {
+    writeFileSync(file, code, { mode: 0o600 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // The directory was removed under us (tmp cleaners); recreate once and retry.
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, code, { mode: 0o600 });
+  }
   return file;
 }

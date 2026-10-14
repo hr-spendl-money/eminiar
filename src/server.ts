@@ -21,6 +21,10 @@ if (process.argv.includes("--probe")) {
 
 const server = new McpServer({ name: "eminiar", version: version() });
 
+// Sandbox tools never read the code graph, so they need not wait for edited files to
+// be re-parsed; the drain still starts first and overlaps the child process instead.
+const SANDBOX_TOOLS = new Set(["em_execute", "em_execute_file", "em_batch_execute"]);
+
 for (const tool of tools) {
   server.registerTool(
     tool.name,
@@ -36,7 +40,8 @@ for (const tool of tools) {
         const ctx = getContext(typeof project_root === "string" ? project_root : undefined);
         // Files edited since the last call get re-parsed before any tool runs.
         if (!tool.name.startsWith("em_graph") && tool.name !== "em_reindex") {
-          await drainReindexQueue(ctx, getStorage(ctx)).catch(() => undefined);
+          const drain = drainReindexQueue(ctx, getStorage(ctx)).catch(() => undefined);
+          if (!SANDBOX_TOOLS.has(tool.name)) await drain;
         }
         return await tool.handler(rest, ctx);
       } catch (err) {
@@ -61,6 +66,17 @@ try {
 } catch (err) {
   process.stderr.write(`eminiar: liveness marker skipped: ${(err as Error).message}\n`);
 }
+
+// Open the project database as soon as the transport is up rather than inside the
+// first tool call: loading sqlite-vec and checking migrations is ~10 ms the first
+// em_execute of a session would otherwise pay.
+setImmediate(() => {
+  try {
+    getStorage(getContext());
+  } catch {
+    // the first tool call reports the real error
+  }
+});
 
 // Warm the project in the background so the first em_* call is fast: parse
 // changed code into the graph, refresh git signals, embed pending chunks.

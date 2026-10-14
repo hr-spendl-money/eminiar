@@ -11,6 +11,13 @@
 EM_HOME="${EMINIAR_HOME:-$HOME/.eminiar}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# V8 compile cache (Node >= 22.1): bytecode for dist/*.js is reused across launches,
+# trimming server and hook start-up. Older Node ignores the variable.
+if [ -z "$NODE_COMPILE_CACHE" ]; then
+  NODE_COMPILE_CACHE="$EM_HOME/compile-cache"
+  export NODE_COMPILE_CACHE
+fi
+
 # Node: the binary pinned at install time (so nvm/volta PATHs never matter), else PATH.
 NODE=""
 if [ -f "$EM_HOME/node-path" ]; then

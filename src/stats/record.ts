@@ -17,12 +17,16 @@ export function recordStat(
   tool: string,
   d: { rawChars: number; returnedChars: number; durationMs: number },
 ): void {
-  try {
-    getStorage(ctx).statRecord(getCurrentSession(ctx), tool, d);
-    globalDb().record(tool, d);
-  } catch {
-    // stats must never break a tool call
-  }
+  // Deferred past the current I/O phase: the handler's reply is serialised and
+  // written to stdout before these two commits run, so they never add to latency.
+  setImmediate(() => {
+    try {
+      getStorage(ctx).statRecord(getCurrentSession(ctx), tool, d);
+      globalDb().record(tool, d);
+    } catch {
+      // stats must never break a tool call
+    }
+  });
 }
 
 /**

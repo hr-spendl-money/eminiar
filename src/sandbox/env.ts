@@ -51,11 +51,24 @@ function globToRegex(g: string): RegExp {
   return new RegExp(`^${g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
 }
 
+// Compiled allowlists keyed by the extra names; the base list never changes.
+const patternCache = new Map<string, RegExp[]>();
+function allowPatterns(extraAllow: string[]): RegExp[] {
+  const key = extraAllow.join("\0");
+  let patterns = patternCache.get(key);
+  if (!patterns) {
+    if (patternCache.size >= 16) patternCache.clear();
+    patterns = [...BASE_ALLOW, ...extraAllow].map(globToRegex);
+    patternCache.set(key, patterns);
+  }
+  return patterns;
+}
+
 export function buildEnv(
   extraAllow: string[],
   overrides: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
-  const patterns = [...BASE_ALLOW, ...extraAllow].map(globToRegex);
+  const patterns = allowPatterns(extraAllow);
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;

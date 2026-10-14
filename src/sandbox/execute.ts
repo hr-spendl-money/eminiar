@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ProjectContext } from "../context.js";
 import { checkCommand, loadPermissionRules } from "../permissions/settings.js";
 import { buildEnv } from "./env.js";
-import { resolveLanguage, writeScratch } from "./languages.js";
+import { detectInterpreter, resolveLanguage, writeScratch } from "./languages.js";
 import { type RunResult, runProcess } from "./run.js";
 
 export interface ExecuteInput {
@@ -27,7 +27,7 @@ export async function execute(ctx: ProjectContext, input: ExecuteInput): Promise
   if (ctx.config.sandbox.disabledLanguages.includes(lang.id)) {
     throw new Error(`language "${lang.id}" is disabled by eminiar.config.json`);
   }
-  const bin = lang.detect();
+  const bin = detectInterpreter(lang);
   if (!bin) throw new Error(`${lang.id} is not installed (no interpreter on PATH)`);
 
   if (lang.id === "shell") {
