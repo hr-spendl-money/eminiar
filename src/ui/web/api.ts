@@ -1,4 +1,7 @@
 /** Fetch wrapper for the dashboard API: every call carries the selected project root. */
+import type { DocCategory } from "../../docs/category.js";
+
+export type { DocCategory };
 
 let root = new URLSearchParams(location.search).get("root") ?? "";
 
@@ -34,6 +37,14 @@ export class ApiError extends Error {
 export async function api<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
   const r = await fetch(url(path, params), init);
   const body = (await r.json().catch(() => ({ error: "bad response" }))) as T & { error?: string };
+  if (r.status === 404 && body.error === "not found" && path.startsWith("/api/"))
+    // The server routes to a generic 404 only for paths it does not know: the
+    // dashboard bundle on disk is newer than the running server. Static assets are
+    // read per request, so the UI updates while the server's own bundle stays frozen.
+    throw new ApiError(
+      `${path} is not available on the running server; restart \`eminiar ui\` to pick up the rebuilt bundle`,
+      r.status,
+    );
   if (!r.ok) throw new ApiError(body.error ?? `HTTP ${r.status}`, r.status);
   if (body && typeof body === "object" && "error" in body && body.error)
     throw new ApiError(String(body.error), r.status);
@@ -281,6 +292,8 @@ export interface DocsSyncState {
 export interface DocSourceUi {
   name: string;
   kind: "url" | "path";
+  /** Derived server-side; see src/docs/category.ts. */
+  category: DocCategory;
   urls?: string[];
   path?: string;
   glob?: string[];

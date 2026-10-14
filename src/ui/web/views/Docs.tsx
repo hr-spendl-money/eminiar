@@ -1,6 +1,13 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
+  categoryInfo,
+  categoryRank,
+  DOC_CATEGORIES,
+  type DocCategory,
+  GROUP_LABELS,
+} from "../../../docs/category.js";
+import {
   api,
   type DiscoveryUi,
   type DocPage,
@@ -309,6 +316,62 @@ function AddForm({ onDone }: { onDone: (r: DocsAddResult) => void }): JSX.Elemen
   );
 }
 
+/** Subproject for discovered local docs (`<subproject>-readme` tagged `subproject`), else the name. */
+function labelOf(s: DocSourceUi): string {
+  const tag = s.tags?.[0];
+  if (s.kind === "path" && tag && (s.name === tag || s.name.startsWith(`${tag}-`))) return tag;
+  return s.name;
+}
+
+/** Second line: where the source points, so rows under one category heading differ. */
+function whereOf(s: DocSourceUi): string {
+  if (s.kind === "path") {
+    const p = s.path && s.path !== "." ? s.path : "";
+    const g = s.glob?.length
+      ? s.glob.length <= 2
+        ? s.glob.join(", ")
+        : `${s.glob.length} globs`
+      : "";
+    return [p, g].filter(Boolean).join(" · ") || s.title || "project root";
+  }
+  const hosts = [
+    ...new Set((s.urls ?? []).map((u) => u.replace(/^https?:\/\//, "").split("/")[0])),
+  ];
+  return hosts.join(", ") || s.provider || "";
+}
+
+function SourceRow({
+  s,
+  sel,
+  onSelect,
+}: {
+  s: DocSourceUi;
+  sel: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const label = labelOf(s);
+  return (
+    <div class={cls("item", sel && "sel")} onClick={onSelect}>
+      <div class="n">
+        {label}
+        {label !== s.name ? <span class="muted small"> {s.name}</span> : null}
+      </div>
+      <div class="p" title={s.kind === "url" ? (s.urls ?? []).join("\n") : whereOf(s)}>
+        <KindTag kind={s.kind} />
+        {s.provider ? <span class="muted">{s.provider} · </span> : null}
+        <span class="muted">{whereOf(s)}</span>
+      </div>
+      <div class="p">
+        <span class="muted">
+          {s.documents} docs · {s.chunks} chunks ·{" "}
+          {s.sync ? `synced ${ago(s.sync.at)}` : "never synced"}
+          {s.sync?.errors.length ? <span class="bad"> · {s.sync.errors.length} errors</span> : null}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Sources({
   params,
   onLog,
@@ -324,19 +387,58 @@ function Sources({
   useEffect(() => {
     if (params.name) setSel(params.name);
   }, [params.name]);
+  const [cat, setCat] = useState<DocCategory | "all">("all");
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const d = q.data;
   const rows = useMemo(() => {
     const f = filter.trim().toLowerCase();
     return (d?.sources ?? []).filter(
       (s) =>
-        !f ||
-        s.name.includes(f) ||
-        (s.provider ?? "").includes(f) ||
-        (s.tags ?? []).some((t) => t.includes(f)) ||
-        (s.urls ?? []).some((u) => u.includes(f)) ||
-        (s.path ?? "").includes(f),
+        (cat === "all" || s.category === cat) &&
+        (!f ||
+          s.name.includes(f) ||
+          (s.title ?? "").toLowerCase().includes(f) ||
+          (s.provider ?? "").includes(f) ||
+          (s.tags ?? []).some((t) => t.includes(f)) ||
+          (s.urls ?? []).some((u) => u.includes(f)) ||
+          (s.path ?? "").includes(f)),
     );
-  }, [d, filter]);
+  }, [d, filter, cat]);
+  /** How many sources each category has before the chip filter (chips stay stable). */
+  const counts = useMemo(() => {
+    const m = new Map<DocCategory, number>();
+    for (const s of d?.sources ?? []) m.set(s.category, (m.get(s.category) ?? 0) + 1);
+    return m;
+  }, [d]);
+  /** Rows bucketed by group → category, in display order. */
+  const groups = useMemo(() => {
+    const byCat = new Map<DocCategory, DocSourceUi[]>();
+    for (const s of rows) {
+      const list = byCat.get(s.category) ?? [];
+      list.push(s);
+      byCat.set(s.category, list);
+    }
+    const cats = [...byCat.entries()]
+      .sort((a, b) => categoryRank(a[0]) - categoryRank(b[0]))
+      .map(([id, items]) => ({
+        info: categoryInfo(id),
+        items: items.sort((a, b) => labelOf(a).localeCompare(labelOf(b))),
+      }));
+    const out: Array<{ group: string; label: string; cats: typeof cats }> = [];
+    for (const c of cats) {
+      const last = out[out.length - 1];
+      if (last?.group === c.info.group) last.cats.push(c);
+      else out.push({ group: c.info.group, label: GROUP_LABELS[c.info.group], cats: [c] });
+    }
+    return out;
+  }, [rows]);
+  const toggle = (id: string) =>
+    setCollapsed((c) => {
+      const n = new Set(c);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
   const current = rows.find((s) => s.name === sel) ?? d?.sources.find((s) => s.name === sel);
   const sync = async (names: string[] | undefined, force: boolean) => {
     const label = names?.length === 1 ? `sync ${names[0]}` : "sync all";
@@ -390,6 +492,27 @@ function Sources({
             : ""}
         </span>
       </div>
+      {d?.sources.length ? (
+        <div class="row wrap" style={{ marginBottom: 10, gap: 4 }}>
+          <button
+            type="button"
+            class={cls("chip", cat === "all" && "on")}
+            onClick={() => setCat("all")}
+          >
+            All · {d.sources.length}
+          </button>
+          {DOC_CATEGORIES.filter((c) => counts.get(c.id)).map((c) => (
+            <button
+              type="button"
+              class={cls("chip", cat === c.id && "on")}
+              title={c.blurb}
+              onClick={() => setCat(cat === c.id ? "all" : c.id)}
+            >
+              {c.label} · {counts.get(c.id)}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {adding && (
         <AddForm
           onDone={(r) => {
@@ -418,23 +541,38 @@ function Sources({
                 <Spinner />
               </Empty>
             ) : rows.length ? (
-              rows.map((s) => (
-                <div class={cls("item", sel === s.name && "sel")} onClick={() => setSel(s.name)}>
-                  <div class="n">{s.name}</div>
-                  <div class="p">
-                    <KindTag kind={s.kind} />
-                    {s.provider ? <span class="muted">{s.provider}</span> : null}
-                  </div>
-                  <div class="p">
-                    <span class="muted">
-                      {s.documents} docs · {s.chunks} chunks ·{" "}
-                      {s.sync ? `synced ${ago(s.sync.at)}` : "never synced"}
-                      {s.sync?.errors.length ? (
-                        <span class="bad"> · {s.sync.errors.length} errors</span>
-                      ) : null}
-                    </span>
-                  </div>
-                </div>
+              groups.map((g) => (
+                <>
+                  {groups.length > 1 ? <div class="group-h">{g.label}</div> : null}
+                  {g.cats.map(({ info, items }) => {
+                    const open = !collapsed.has(info.id);
+                    return (
+                      <>
+                        <div
+                          class={cls("cat-h", !open && "closed")}
+                          title={info.blurb}
+                          onClick={() => toggle(info.id)}
+                        >
+                          <span class="caret">{open ? "▾" : "▸"}</span>
+                          {info.label}
+                          <span class="muted"> · {items.length}</span>
+                          <span class="muted small right">
+                            {fmt(items.reduce((n, s) => n + s.documents, 0))} docs
+                          </span>
+                        </div>
+                        {open
+                          ? items.map((s) => (
+                              <SourceRow
+                                s={s}
+                                sel={sel === s.name}
+                                onSelect={() => setSel(s.name)}
+                              />
+                            ))
+                          : null}
+                      </>
+                    );
+                  })}
+                </>
               ))
             ) : (
               <Empty>

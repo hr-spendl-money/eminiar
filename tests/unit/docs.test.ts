@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getContext, type ProjectContext, resetContextCache } from "../../src/context.js";
 import { addDocSources, pickCandidates, removeDocSource } from "../../src/docs/add.js";
 import { catalogForProvider, catalogLookup } from "../../src/docs/catalog.js";
+import { categoryInfo, docCategory } from "../../src/docs/category.js";
 import { discoverDocs, rootDomain } from "../../src/docs/discover.js";
 import {
   docsTag,
@@ -253,6 +254,76 @@ describe("catalogue", () => {
     expect(rootDomain("api.eu.sumsub.com")).toBe("sumsub.com");
     expect(rootDomain("api.bank.co.za")).toBe("bank.co.za");
     expect(rootDomain("zod.dev")).toBe("zod.dev");
+  });
+});
+
+describe("categories", () => {
+  const cat = (s: Parameters<typeof docCategory>[0]) =>
+    docCategory(s, s.provider ? catalogForProvider(s.provider) : undefined);
+  it("classifies discovered local sources by their discovery title or name", () => {
+    expect(
+      cat({ kind: "path", name: "igor-readme", title: "project readme and top-level guides" }),
+    ).toBe("readme");
+    expect(cat({ kind: "path", name: "igor-docs", title: "docs/ directory" })).toBe("guides");
+    expect(cat({ kind: "path", name: "adr", title: "architecture decision records" })).toBe("adr");
+    expect(
+      cat({
+        kind: "path",
+        name: "x-agent-instructions",
+        title: "Copilot / Claude / Cursor instructions",
+      }),
+    ).toBe("agent-instructions");
+    expect(
+      cat({
+        kind: "path",
+        name: "x-api-specs",
+        title: "OpenAPI / Postman / GraphQL / protobuf specs",
+      }),
+    ).toBe("api-specs");
+    expect(
+      cat({ kind: "path", name: "x-env-example", title: "environment variable reference" }),
+    ).toBe("env-reference");
+    expect(
+      cat({
+        kind: "path",
+        name: "x-deploy-config",
+        title: "Terraform, Kubernetes, Helm, Compose and CI workflow files",
+      }),
+    ).toBe("deploy-config");
+    // name suffix alone, no title
+    expect(cat({ kind: "path", name: "spendl-tenants-readme" })).toBe("readme");
+    expect(cat({ kind: "path", name: "docs" })).toBe("guides");
+  });
+  it("classifies hand-registered paths by what they point to", () => {
+    expect(cat({ kind: "path", name: "spec", path: "api", glob: ["openapi.yaml"] })).toBe(
+      "api-specs",
+    );
+    expect(cat({ kind: "path", name: "handbook", path: "documentation" })).toBe("guides");
+    expect(
+      cat({ kind: "path", name: "infra", path: ".", glob: ["**/*.tf", "k8s/**/*.yaml"] }),
+    ).toBe("deploy-config");
+    expect(cat({ kind: "path", name: "notes", path: "notes", glob: ["*.org"] })).toBe("local");
+  });
+  it("classifies external sources by catalogue tier, then provider kind", () => {
+    const awsTier = catalogForProvider("npm:@aws-sdk/client-s3")?.tier ?? "library";
+    expect(cat({ kind: "url", name: "aws", provider: "npm:@aws-sdk/client-s3" })).toBe(awsTier);
+    const ghTier = catalogForProvider("files:github-actions")?.tier ?? "library";
+    expect(cat({ kind: "url", name: "github", provider: "files:github-actions" })).toBe(ghTier);
+    expect(cat({ kind: "url", name: "tool", provider: "files:unknown-infra-tool" })).toBe("infra");
+    expect(cat({ kind: "url", name: "img", provider: "image:unknown-image" })).toBe("infra");
+    expect(cat({ kind: "url", name: "ott", provider: "api:test-payoutapi.ott-mobile.com" })).toBe(
+      "api",
+    );
+    expect(cat({ kind: "url", name: "lib", provider: "pypi:some-unknown-package-xyz" })).toBe(
+      "library",
+    );
+    expect(cat({ kind: "url", name: "svc", provider: "env:SOME_UNKNOWN_SERVICE_URL" })).toBe(
+      "service",
+    );
+    expect(cat({ kind: "url", name: "minio", urls: ["https://min.io/docs"] })).toBe("web");
+    expect(categoryInfo("service").group).toBe("external");
+    expect(categoryInfo("readme").group).toBe("project");
+    expect(categoryInfo("bogus").id).toBe("local");
   });
 });
 
