@@ -41,6 +41,8 @@ export interface ChunkInput {
   startLine?: number | undefined;
   endLine?: number | undefined;
   hash: string;
+  /** Graph node id (`sym:<rel>#<Qualified>`) this chunk is the body of, for code. */
+  symbolId?: string | undefined;
 }
 
 export interface ChunkRow {
@@ -54,6 +56,7 @@ export interface ChunkRow {
   end_line: number | null;
   hash: string;
   embedded: number;
+  symbol_id: string | null;
 }
 
 export interface ChunkWithDoc extends ChunkRow {
@@ -149,7 +152,14 @@ export interface MemoryInput {
   fileSize?: number | undefined;
   createdAt?: number | undefined;
   updatedAt?: number | undefined;
+  /** ADR-style lifecycle for decisions: proposed | accepted | superseded | deprecated. */
+  status?: string | undefined;
+  /** Name of the memory this one replaces. */
+  supersedes?: string | undefined;
 }
+
+export const MEMORY_STATUSES = ["proposed", "accepted", "superseded", "deprecated"] as const;
+export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
 
 export interface MemoryRow {
   id: number;
@@ -166,9 +176,12 @@ export interface MemoryRow {
   file_mtime: number | null;
   file_size: number | null;
   updated_at: number | null;
+  status: string | null;
+  supersedes: string | null;
 }
 
-export type GraphSource = "tree-sitter" | "curated" | "git";
+/** Who produced a node/edge: a parser, a person, git history, or a derived analysis pass. */
+export type GraphSource = "tree-sitter" | "curated" | "git" | "analysis";
 
 export interface GraphNode {
   id: string;
@@ -216,6 +229,9 @@ export interface GraphEdgeRow {
   updated_at: number;
 }
 
+/** indexed: parsed into graph + search; partial: indexed with parse errors; skipped/unsupported: not in the graph. */
+export type FileIndexStatus = "indexed" | "partial" | "skipped" | "unsupported";
+
 export interface FileIndexRow {
   path: string;
   hash: string;
@@ -224,7 +240,65 @@ export interface FileIndexRow {
   language: string | null;
   indexed_at: number;
   document_id: number | null;
+  status: FileIndexStatus;
+  /** Why the file is not fully indexed (e.g. "over 1.5 MB", a parser error). */
+  reason: string | null;
+  /** Symbols the parser found. */
+  symbols: number | null;
+  errors: string | null;
 }
+
+export interface FileIndexInput {
+  path: string;
+  hash: string;
+  mtime: number | null;
+  size: number | null;
+  language: string | null;
+  document_id: number | null;
+  status?: FileIndexStatus | undefined;
+  reason?: string | null | undefined;
+  symbols?: number | null | undefined;
+  errors?: string | null | undefined;
+}
+
+/** Per-node structural and churn signals; `score` is a hotspot signal, not a quality grade. */
+export interface GraphMetricRow {
+  node_id: string;
+  kind: string;
+  path: string | null;
+  fan_in: number;
+  fan_out: number;
+  loc: number;
+  complexity: number;
+  commits_90d: number;
+  score: number;
+  cluster: number | null;
+  updated_at: number;
+}
+
+export type GraphMetricInput = Omit<GraphMetricRow, "updated_at">;
+
+export interface IndexRunRow {
+  id: number;
+  scope: string;
+  started_at: number;
+  finished_at: number | null;
+  scanned: number;
+  indexed: number;
+  unchanged: number;
+  skipped: number;
+  removed: number;
+  errors: number;
+  head_sha: string | null;
+  detail: string | null;
+}
+
+export type IndexRunSummary = Partial<
+  Pick<
+    IndexRunRow,
+    "scanned" | "indexed" | "unchanged" | "skipped" | "removed" | "errors" | "detail"
+  >
+>;
 
 export interface SnapshotRow {
   id: number;

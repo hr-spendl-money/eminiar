@@ -14,8 +14,14 @@ import type { ProjectContext } from "../context.js";
 import { memoryId } from "../graph/ids.js";
 import { indexContent } from "../index/indexer.js";
 import type { StorageAdapter } from "../storage/adapter.js";
-import type { MemoryRow } from "../storage/types.js";
+import { MEMORY_STATUSES, type MemoryRow, type MemoryStatus } from "../storage/types.js";
 import { type MemoryMeta, parseMemoryFile, serializeMemoryFile } from "./frontmatter.js";
+
+export { MEMORY_STATUSES };
+
+export function isStatus(s: unknown): s is MemoryStatus {
+  return typeof s === "string" && (MEMORY_STATUSES as readonly string[]).includes(s);
+}
 
 /**
  * Memories are markdown files under `<project>/<memories.dir>/<topic>/<name>.md`
@@ -119,6 +125,8 @@ export function normalizeRelated(ids: string[]): string[] {
 export interface MemoryFile {
   name: string;
   kind: string;
+  status?: string | undefined;
+  supersedes?: string | undefined;
   tags: string[];
   related: string[];
   created: string;
@@ -142,6 +150,7 @@ function syncGraph(
   kind: string,
   tags: string[],
   related: string[],
+  supersedes?: string | undefined,
 ): void {
   db.graphDeleteForPath("curated", rel);
   db.graphUpsertNodes([
@@ -154,18 +163,25 @@ function syncGraph(
       meta: { kind, tags },
     },
   ]);
-  if (related.length) {
-    db.graphUpsertEdges(
-      related.map((dst) => ({
-        src: memoryId(name),
-        dst,
-        kind: "mentions",
-        source: "curated",
-        confidence: 1,
-        weight: 1,
-      })),
-    );
+  const edges = related.map((dst) => ({
+    src: memoryId(name),
+    dst,
+    kind: "mentions",
+    source: "curated" as const,
+    confidence: 1,
+    weight: 1,
+  }));
+  if (supersedes) {
+    edges.push({
+      src: memoryId(name),
+      dst: memoryId(supersedes),
+      kind: "supersedes",
+      source: "curated",
+      confidence: 1,
+      weight: 1,
+    });
   }
+  if (edges.length) db.graphUpsertEdges(edges);
 }
 
 function forgetInDb(db: StorageAdapter, name: string, rel: string): void {
@@ -209,6 +225,8 @@ function syncFile(
       fileSize: st.size,
       createdAt: row.created_at,
       updatedAt: row.updated_at ?? row.created_at,
+      status: row.status ?? undefined,
+      supersedes: row.supersedes ?? undefined,
     });
     return { changed: false, row: db.memoryGetByName(name)! };
   }
@@ -218,6 +236,8 @@ function syncFile(
   const kind = isKind(meta.kind) ? meta.kind : "note";
   const tags = arr(meta.tags);
   const related = normalizeRelated(arr(meta.related));
+  const status = isStatus(meta.status) ? meta.status : undefined;
+  const supersedes = str(meta.supersedes);
   const created =
     str(meta.created) ??
     (row
@@ -248,7 +268,7 @@ function syncFile(
     content: `${body || "(empty)"}${tags.length ? `\n\ntags: ${tags.join(", ")}` : ""}`,
     kind: "markdown",
     sessionId: opts.sessionId,
-    meta: { name, kind, tags, related, path: rel },
+    meta: { name, kind, tags, related, path: rel, status, supersedes },
   });
   db.memoryUpsertByName({
     name,
@@ -264,9 +284,32 @@ function syncFile(
     fileSize: st.size,
     createdAt: Date.parse(created) || Date.now(),
     updatedAt: Date.parse(updated) || Date.now(),
+    status,
+    supersedes,
   });
-  syncGraph(db, name, rel, kind, tags, related);
+  syncGraph(db, name, rel, kind, tags, related, supersedes);
   return { changed: true, row: db.memoryGetByName(name)! };
+}
+
+/** Change header fields of a memory in place (status, supersedes …) without touching the body. */
+export function setMeta(
+  ctx: ProjectContext,
+  db: StorageAdapter,
+  name: string,
+  patch: Record<string, string | undefined>,
+): boolean {
+  const abs = absOf(ctx, name);
+  if (!existsSync(abs)) return false;
+  const parsed = parseMemoryFile(readFileSync(abs, "utf8"));
+  const meta: MemoryMeta = { ...parsed.meta };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete meta[k];
+    else meta[k] = v;
+  }
+  meta.updated = new Date().toISOString();
+  writeFileSync(abs, serializeMemoryFile(meta, parsed.body));
+  syncFile(ctx, db, name, { force: true });
+  return true;
 }
 
 /** Rows from before memories were files become files once; the old row and document go. */
@@ -346,13 +389,23 @@ export interface WriteInput {
   /** Overwrite an existing memory of the same name (its created date is kept). */
   replace?: boolean | undefined;
   sessionId?: string | undefined;
+  /** Decision lifecycle; a decision without one reads as accepted. */
+  status?: MemoryStatus | undefined;
+  /** The memory this one replaces; that one is marked superseded. */
+  supersedes?: string | undefined;
 }
 
 export function write(
   ctx: ProjectContext,
   db: StorageAdapter,
   input: WriteInput,
-): { name: string; path: string; created: boolean; row: MemoryRow } {
+): {
+  name: string;
+  path: string;
+  created: boolean;
+  row: MemoryRow;
+  superseded?: string | undefined;
+} {
   const name = input.name?.trim() || autoName(db, input.kind, input.content);
   if (!isValidName(name))
     throw new Error(
@@ -376,22 +429,24 @@ export function write(
   }
   const created =
     str(extra.created) ?? (prev ? new Date(prev.created_at).toISOString() : undefined) ?? now;
-  writeMemoryFile(
-    ctx,
+  const meta: MemoryMeta = {
+    ...extra,
     name,
-    {
-      ...extra,
-      name,
-      kind: input.kind,
-      tags: input.tags ?? [],
-      related: normalizeRelated(input.related ?? []),
-      created,
-      updated: now,
-    },
-    input.content,
-  );
+    kind: input.kind,
+    tags: input.tags ?? [],
+    related: normalizeRelated(input.related ?? []),
+    created,
+    updated: now,
+  };
+  if (input.status) meta.status = input.status;
+  if (input.supersedes) meta.supersedes = input.supersedes;
+  writeMemoryFile(ctx, name, meta, input.content);
   const r = syncFile(ctx, db, name, { force: true, sessionId: input.sessionId })!;
-  return { name, path: relOf(ctx, name), created: !exists, row: r.row };
+  let superseded: string | undefined;
+  if (input.supersedes && input.supersedes !== name) {
+    if (setMeta(ctx, db, input.supersedes, { status: "superseded" })) superseded = input.supersedes;
+  }
+  return { name, path: relOf(ctx, name), created: !exists, row: r.row, superseded };
 }
 
 export function read(
@@ -405,6 +460,8 @@ export function read(
   return {
     name,
     kind: synced.row.kind,
+    status: str(parsed.meta.status),
+    supersedes: str(parsed.meta.supersedes),
     tags: arr(parsed.meta.tags),
     related: normalizeRelated(arr(parsed.meta.related)),
     created: str(parsed.meta.created) ?? new Date(synced.row.created_at).toISOString(),
@@ -419,7 +476,12 @@ export function read(
 export function list(
   ctx: ProjectContext,
   db: StorageAdapter,
-  opts: { topic?: string | undefined; kind?: string | undefined; limit?: number | undefined } = {},
+  opts: {
+    topic?: string | undefined;
+    kind?: string | undefined;
+    status?: string | undefined;
+    limit?: number | undefined;
+  } = {},
 ): MemoryRow[] {
   void ctx;
   const rows = db.memoryList({ ...opts, limit: opts.limit ?? 100 }).filter((r) => r.name);

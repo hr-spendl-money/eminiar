@@ -109,7 +109,9 @@
             "**/*.js",
             "**/*.jsx",
             "**/*.mjs",
-            "**/*.cjs"
+            "**/*.cjs",
+            "**/*.py",
+            "**/*.go"
           ],
           "type": "array",
           "items": {
@@ -123,7 +125,13 @@
             "**/build/**",
             "**/.git/**",
             "**/coverage/**",
-            "**/*.d.ts"
+            "**/*.d.ts",
+            "**/.venv/**",
+            "**/venv/**",
+            "**/__pycache__/**",
+            "**/site-packages/**",
+            "**/vendor/**",
+            "**/*.min.js"
           ],
           "type": "array",
           "items": {
@@ -170,6 +178,19 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "code": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "backend": {
+          "default": "tree-sitter",
+          "type": "string",
+          "enum": [
+            "tree-sitter"
+          ]
         }
       }
     },

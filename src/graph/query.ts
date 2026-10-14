@@ -2,7 +2,15 @@ import type { StorageAdapter } from "../storage/adapter.js";
 import type { GraphEdgeRow, GraphNodeRow } from "../storage/types.js";
 import { fileId, fileOf, symId } from "./ids.js";
 
-export const STRUCTURAL = ["imports", "calls", "extends", "implements", "references"];
+export const STRUCTURAL = [
+  "imports",
+  "reexports",
+  "calls",
+  "extends",
+  "implements",
+  "references",
+  "handles",
+];
 
 /** Accept a node id, a file path, or a bare symbol name and find the node. */
 export function resolveNode(db: StorageAdapter, ref: string): GraphNodeRow | undefined {
@@ -214,24 +222,80 @@ export function path(db: StorageAdapter, from: string, to: string): GraphEdgeRow
   return undefined;
 }
 
+export interface Hotspot {
+  id: string;
+  path: string;
+  kind: string;
+  commits_90d: number;
+  commits: number;
+  last_touched: string;
+  fan_in: number;
+  fan_out: number;
+  complexity: number;
+  loc: number;
+  /** 0..1 hotspot signal (fan-in, churn, complexity); not a quality grade. */
+  score: number;
+}
+
+/**
+ * Files (default) or symbols that deserve attention: ranked by the metrics score when
+ * metrics exist, else by git churn alone (first run before the metrics pass).
+ */
 export function hotspots(
   db: StorageAdapter,
   limit = 15,
-): Array<{ path: string; commits_90d: number; commits: number; last_touched: string }> {
+  opts: { kind?: "file" | "symbol" | undefined; pathPrefix?: string | undefined } = {},
+): Hotspot[] {
+  const symbolKinds = ["function", "class", "method"];
+  const rows =
+    opts.kind === "symbol"
+      ? db.metricsTop({ kinds: symbolKinds, pathPrefix: opts.pathPrefix, limit })
+      : db.metricsTop({ kind: "file", pathPrefix: opts.pathPrefix, limit });
+  const gitMeta = (meta: string | null) => {
+    if (!meta) return {};
+    try {
+      return JSON.parse(meta) as { commits_90d?: number; commits?: number; last_touched?: string };
+    } catch {
+      return {};
+    }
+  };
+  if (rows.length) {
+    const nodes = new Map(db.graphGetNodes(rows.map((r) => r.node_id)).map((n) => [n.id, n]));
+    return rows.map((r) => {
+      const n = nodes.get(r.node_id);
+      const file = r.kind === "file" ? n : n?.path ? db.graphGetNode(fileId(n.path)) : undefined;
+      const g = gitMeta(file?.meta ?? null);
+      return {
+        id: r.node_id,
+        path: r.kind === "file" ? (r.path ?? r.node_id) : `${r.path} > ${n?.name ?? r.node_id}`,
+        kind: r.kind,
+        commits_90d: r.commits_90d,
+        commits: g.commits ?? 0,
+        last_touched: g.last_touched ?? "",
+        fan_in: r.fan_in,
+        fan_out: r.fan_out,
+        complexity: r.complexity,
+        loc: r.loc,
+        score: r.score,
+      };
+    });
+  }
   return db
     .graphFileNodes()
-    .map((n) => ({
+    .map((n) => ({ n, g: gitMeta(n.meta) }))
+    .filter((x) => x.g.commits)
+    .map(({ n, g }) => ({
+      id: n.id,
       path: n.path ?? n.name,
-      ...(n.meta
-        ? (JSON.parse(n.meta) as { commits_90d?: number; commits?: number; last_touched?: string })
-        : {}),
-    }))
-    .filter((f) => f.commits)
-    .map((f) => ({
-      path: f.path,
-      commits_90d: f.commits_90d ?? 0,
-      commits: f.commits ?? 0,
-      last_touched: f.last_touched ?? "",
+      kind: "file",
+      commits_90d: g.commits_90d ?? 0,
+      commits: g.commits ?? 0,
+      last_touched: g.last_touched ?? "",
+      fan_in: 0,
+      fan_out: 0,
+      complexity: 0,
+      loc: 0,
+      score: 0,
     }))
     .sort((a, b) => b.commits_90d - a.commits_90d || b.commits - a.commits)
     .slice(0, limit);
@@ -261,7 +325,7 @@ export function orphans(db: StorageAdapter, limit = 30): string[] {
     db
       .graphEdgesTo(
         files.map((f) => f.id),
-        ["imports"],
+        ["imports", "reexports"],
       )
       .map((e) => e.dst),
   );
@@ -269,4 +333,246 @@ export function orphans(db: StorageAdapter, limit = 30): string[] {
     .filter((f) => !imported.has(f.id))
     .map((f) => f.path ?? f.name)
     .slice(0, limit);
+}
+
+const TEST_PATH = /(^|\/)(tests?|__tests__|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+const LIFECYCLE = new Set([
+  "constructor",
+  "default",
+  "main",
+  "render",
+  "toString",
+  "toJSON",
+  "componentDidMount",
+  "componentWillUnmount",
+  "ngOnInit",
+  "setup",
+]);
+
+export interface DeadCodeCandidate {
+  node: GraphNodeRow;
+  reason: string;
+}
+
+/**
+ * Functions, methods and classes with no indexed caller, reference or subclass.
+ * Exported symbols of files nothing imports are entry points and are left out, as are
+ * tests, route handlers and lifecycle names. Dynamic dispatch, framework conventions
+ * and files outside the index are invisible here, so these are candidates, not verdicts.
+ */
+export function deadCode(db: StorageAdapter, limit = 30): DeadCodeCandidate[] {
+  const symbols = db.graphNodesByKind(["function", "method", "class"]);
+  const degrees = db.graphDegrees(["calls", "references", "extends", "implements", "handles"]);
+  const files = db.graphFileNodes();
+  const importedFiles = new Set(
+    db
+      .graphEdgesTo(
+        files.map((f) => f.id),
+        ["imports", "reexports"],
+      )
+      .map((e) => e.dst),
+  );
+  const handlers = new Set(db.graphEdgesAll(["handles"]).map((e) => e.src));
+  const out: DeadCodeCandidate[] = [];
+  for (const s of symbols) {
+    if (!s.path || TEST_PATH.test(s.path) || handlers.has(s.id)) continue;
+    const short = s.name.split(".").pop()!;
+    if (LIFECYCLE.has(short) || short.startsWith("_")) continue;
+    if (degrees.get(s.id)?.fanIn) continue;
+    const exported = !!s.meta && /"exported":true/.test(s.meta);
+    const fileImported = importedFiles.has(fileId(s.path));
+    if (exported && !fileImported) continue; // an entry point's public surface
+    if (s.kind === "method" && !s.name.includes(".")) continue;
+    out.push({
+      node: s,
+      reason: exported ? "exported but nothing in the index uses it" : "no callers or references",
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+export interface RouteRow {
+  id: string;
+  method: string;
+  path: string;
+  framework: string;
+  file: string;
+  line: number | null;
+  handlers: Array<{ id: string; name: string; path: string | null }>;
+}
+
+/** Every HTTP route in the graph with the symbols that handle it. */
+export function routes(db: StorageAdapter, limit = 200): RouteRow[] {
+  const nodes = db.graphNodesByKind(["route"]).slice(0, limit);
+  const handles = db.graphEdgesTo(
+    nodes.map((n) => n.id),
+    ["handles"],
+  );
+  const handlerNodes = new Map(
+    db.graphGetNodes([...new Set(handles.map((e) => e.src))]).map((n) => [n.id, n]),
+  );
+  return nodes
+    .map((n) => {
+      const meta = n.meta
+        ? (JSON.parse(n.meta) as { method?: string; route?: string; framework?: string })
+        : {};
+      return {
+        id: n.id,
+        method: meta.method ?? n.name.split(" ")[0] ?? "",
+        path: meta.route ?? n.name.slice(n.name.indexOf(" ") + 1),
+        framework: meta.framework ?? "http",
+        file: n.path ?? "",
+        line: n.start_line,
+        handlers: handles
+          .filter((e) => e.dst === n.id)
+          .map((e) => {
+            const h = handlerNodes.get(e.src);
+            return { id: e.src, name: h?.name ?? e.src, path: h?.path ?? null };
+          }),
+      };
+    })
+    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
+}
+
+// --- structured pattern query -----------------------------------------------------
+
+export interface NodeFilter {
+  id?: string | undefined;
+  kind?: string | string[] | undefined;
+  /** JS regular expression over the name (a plain substring also works). */
+  name?: string | undefined;
+  /** Substring of the path. */
+  path?: string | undefined;
+  /** Folder prefix of the path. */
+  pathPrefix?: string | undefined;
+}
+
+export interface Pattern {
+  from?: NodeFilter | undefined;
+  edge?:
+    | {
+        kinds?: string[] | undefined;
+        direction?: "out" | "in" | "both" | undefined;
+        depth?: number | undefined;
+      }
+    | undefined;
+  to?: NodeFilter | undefined;
+  return?: "nodes" | "edges" | "paths" | undefined;
+  limit?: number | undefined;
+}
+
+export interface PatternResult {
+  starts: GraphNodeRow[];
+  /** Nodes reached that satisfy `to` (all reached nodes when `to` is absent), nearest first. */
+  nodes: Array<{ node: GraphNodeRow; hops: number }>;
+  edges: GraphEdgeRow[];
+  paths: GraphEdgeRow[][];
+  truncated: boolean;
+}
+
+function nameMatcher(pattern: string | undefined): (name: string) => boolean {
+  if (!pattern) return () => true;
+  try {
+    const re = new RegExp(pattern);
+    return (name) => re.test(name);
+  } catch {
+    return (name) => name.includes(pattern);
+  }
+}
+
+function matchesFilter(n: GraphNodeRow, f: NodeFilter | undefined, nameOk: (s: string) => boolean) {
+  if (!f) return true;
+  if (f.id && n.id !== f.id) return false;
+  if (f.kind && !(Array.isArray(f.kind) ? f.kind : [f.kind]).includes(n.kind)) return false;
+  if (f.path && !(n.path ?? "").includes(f.path)) return false;
+  if (f.pathPrefix && !(n.path ?? "").startsWith(f.pathPrefix)) return false;
+  return nameOk(n.name);
+}
+
+function candidates(db: StorageAdapter, f: NodeFilter, max: number): GraphNodeRow[] {
+  if (f.id) {
+    const n = resolveNode(db, f.id);
+    return n ? [n] : [];
+  }
+  const nameOk = nameMatcher(f.name);
+  const kinds = f.kind ? (Array.isArray(f.kind) ? f.kind : [f.kind]) : undefined;
+  return db
+    .graphFindNodes({ kinds, path: f.path, pathPrefix: f.pathPrefix, limit: max * 20 })
+    .filter((n) => nameOk(n.name))
+    .slice(0, max);
+}
+
+/**
+ * `from -[edge]-> to`: start at nodes matching `from`, walk `depth` hops along the
+ * given edge kinds and direction, keep what matches `to`. Without `from`, the walk
+ * starts at `to` and runs the other way. Returns nodes, the edges that reached them,
+ * and one shortest path per node.
+ */
+export function pattern(db: StorageAdapter, p: Pattern): PatternResult {
+  const limit = p.limit ?? 50;
+  const depth = Math.min(6, Math.max(0, p.edge?.depth ?? 1));
+  let direction = p.edge?.direction ?? "out";
+  let fromF = p.from;
+  let toF = p.to;
+  if (!fromF && toF) {
+    fromF = toF;
+    toF = undefined;
+    direction = direction === "out" ? "in" : direction === "in" ? "out" : "both";
+  }
+  if (!fromF) return { starts: [], nodes: [], edges: [], paths: [], truncated: false };
+  const starts = candidates(db, fromF, 200);
+  const toOk = nameMatcher(toF?.name);
+  const kinds = p.edge?.kinds;
+  const parent = new Map<string, GraphEdgeRow | null>(starts.map((s) => [s.id, null]));
+  const hopOf = new Map<string, number>(starts.map((s) => [s.id, 0]));
+  let frontier = starts.map((s) => s.id);
+  const reached: string[] = [];
+  let truncated = false;
+  for (let hop = 1; hop <= depth && frontier.length; hop++) {
+    const batch: GraphEdgeRow[] = [];
+    if (direction !== "in") batch.push(...db.graphEdgesFrom(frontier, kinds));
+    if (direction !== "out") batch.push(...db.graphEdgesTo(frontier, kinds));
+    const next: string[] = [];
+    for (const e of batch) {
+      const here = direction === "in" ? e.dst : direction === "out" ? e.src : undefined;
+      const there =
+        here === undefined ? (parent.has(e.src) ? e.dst : e.src) : here === e.src ? e.dst : e.src;
+      if (parent.has(there)) continue;
+      parent.set(there, e);
+      hopOf.set(there, hop);
+      next.push(there);
+      reached.push(there);
+    }
+    frontier = next;
+    if (reached.length > 5000) {
+      truncated = true;
+      break;
+    }
+  }
+  const pool = depth === 0 ? starts.map((s) => s.id) : reached;
+  const nodesById = new Map(db.graphGetNodes(pool).map((n) => [n.id, n]));
+  const matched: Array<{ node: GraphNodeRow; hops: number }> = [];
+  for (const id of pool) {
+    const n = nodesById.get(id);
+    if (!n || !matchesFilter(n, toF, toOk)) continue;
+    matched.push({ node: n, hops: hopOf.get(id) ?? 0 });
+  }
+  matched.sort((a, b) => a.hops - b.hops || a.node.id.localeCompare(b.node.id));
+  if (matched.length > limit) truncated = true;
+  const kept = matched.slice(0, limit);
+  const paths: GraphEdgeRow[][] = [];
+  const edgeSet = new Map<string, GraphEdgeRow>();
+  for (const m of kept) {
+    const chain: GraphEdgeRow[] = [];
+    let cur: string | undefined = m.node.id;
+    while (cur && parent.get(cur)) {
+      const e: GraphEdgeRow = parent.get(cur)!;
+      chain.unshift(e);
+      edgeSet.set(`${e.src}|${e.dst}|${e.kind}|${e.source}`, e);
+      cur = e.src === cur ? e.dst : e.src;
+    }
+    paths.push(chain);
+  }
+  return { starts, nodes: kept, edges: [...edgeSet.values()], paths, truncated };
 }

@@ -5,13 +5,18 @@ import type {
   DocumentRow,
   EventInput,
   EventRow,
+  FileIndexInput,
   FileIndexRow,
   FtsHit,
   GraphEdge,
   GraphEdgeRow,
+  GraphMetricInput,
+  GraphMetricRow,
   GraphNode,
   GraphNodeRow,
   GraphSource,
+  IndexRunRow,
+  IndexRunSummary,
   MemoryInput,
   MemoryRow,
   PurgeScope,
@@ -43,6 +48,15 @@ export interface StorageAdapter {
   countDocuments(source?: string): number;
   getChunks(ids: number[]): ChunkWithDoc[];
   chunksOfDocument(documentId: number): ChunkWithDoc[];
+  /** Code chunks that make up a symbol's body, in order (empty when the file predates symbol chunks). */
+  chunksForSymbol(symbolId: string): ChunkWithDoc[];
+  /** Chunk ids whose body matches a JS regular expression, newest documents first. Throws on a bad pattern. */
+  chunkRegexSearch(
+    pattern: string,
+    flags: string,
+    limit: number,
+    filters?: SearchFilters,
+  ): number[];
 
   // --- lexical search ----------------------------------------------------
   ftsSearch(
@@ -97,25 +111,66 @@ export interface StorageAdapter {
   graphFindNodes(opts: {
     query?: string | undefined;
     kind?: string | undefined;
+    /** Several kinds at once (ignored when `kind` is set). */
+    kinds?: string[] | undefined;
+    /** Substring of the path. */
     path?: string | undefined;
+    /** Exact prefix of the path (a folder). */
+    pathPrefix?: string | undefined;
     limit?: number | undefined;
   }): GraphNodeRow[];
+  /** All nodes of the given kinds (no limit; used by analysis passes). */
+  graphNodesByKind(kinds: string[]): GraphNodeRow[];
+  /** Nodes whose [start_line, end_line] overlaps the range, most specific first. */
+  graphNodesAtLines(path: string, startLine: number, endLine: number): GraphNodeRow[];
   graphEdgesFrom(ids: string[], kinds?: string[]): GraphEdgeRow[];
   graphEdgesTo(ids: string[], kinds?: string[]): GraphEdgeRow[];
   graphEdgesByKind(kind: string, limit: number): GraphEdgeRow[];
+  /** Every edge of the given kinds (used by whole-graph analyses). */
+  graphEdgesAll(kinds?: string[]): GraphEdgeRow[];
+  /** Edges whose `dst` starts with `prefix` but names no existing node. */
+  graphDanglingEdges(prefix: string): GraphEdgeRow[];
+  graphDeleteEdges(edges: Array<Pick<GraphEdge, "src" | "dst" | "kind" | "source">>): void;
+  /** Distinct-neighbour counts over the given edge kinds: incoming (fan-in) and outgoing (fan-out). */
+  graphDegrees(kinds: string[]): Map<string, { fanIn: number; fanOut: number }>;
   /** Delete everything a source produced for one file path (nodes with that path + edges touching them). */
   graphDeleteForPath(source: GraphSource, path: string, opts?: { keepFile?: boolean }): void;
   graphDeleteBySource(source: GraphSource): void;
   graphCounts(): { nodes: number; edges: number; byKind: Record<string, number> };
+  /** Node counts per kind. */
+  graphNodeCounts(): Record<string, number>;
   graphFileNodes(): GraphNodeRow[];
+
+  // --- graph metrics ------------------------------------------------------
+  metricsReplace(rows: GraphMetricInput[]): void;
+  metricsGet(ids: string[]): GraphMetricRow[];
+  metricsTop(opts: {
+    orderBy?: "score" | "fan_in" | "fan_out" | "complexity" | "loc" | "commits_90d" | undefined;
+    kind?: string | undefined;
+    kinds?: string[] | undefined;
+    pathPrefix?: string | undefined;
+    cluster?: number | undefined;
+    limit?: number | undefined;
+  }): GraphMetricRow[];
+  metricsCount(): number;
 
   // --- file index & reindex queue ---------------------------------------
   fileIndexGet(path: string): FileIndexRow | undefined;
   fileIndexAll(): FileIndexRow[];
-  fileIndexSet(row: Omit<FileIndexRow, "indexed_at">): void;
+  fileIndexSet(row: FileIndexInput): void;
   fileIndexDelete(path: string): void;
+  /** Row counts per status plus the most common reasons. */
+  fileIndexSummary(): {
+    byStatus: Record<string, number>;
+    reasons: Array<{ reason: string; n: number }>;
+    lastIndexedAt: number | null;
+  };
   reindexQueuePush(path: string, reason: string): void;
   reindexQueueDrain(): string[];
+  reindexQueueSize(): number;
+  indexRunStart(scope: string, headSha?: string | null): number;
+  indexRunFinish(id: number, summary: IndexRunSummary): void;
+  indexRunsRecent(limit: number): IndexRunRow[];
 
   // --- memories ----------------------------------------------------------
   memoryInsert(m: MemoryInput): number;
@@ -123,6 +178,8 @@ export interface StorageAdapter {
     kind?: string | undefined;
     /** Only names under `topic/`. */
     topic?: string | undefined;
+    /** Only this lifecycle status (a missing status counts as accepted). */
+    status?: string | undefined;
     limit?: number | undefined;
   }): MemoryRow[];
   memoryGet(id: number): MemoryRow | undefined;

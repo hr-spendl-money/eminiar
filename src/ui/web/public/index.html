@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eminiar</title>
+<link rel="stylesheet" href="/styles.css">
+<script>
+// Apply the saved theme before the first paint so the page never flashes.
+(() => {
+  try {
+    const t = localStorage.getItem("eminiar.theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch {
+    /* storage unavailable */
+  }
+})();
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script src="/app.global.js"></script>
+</body>
+</html>

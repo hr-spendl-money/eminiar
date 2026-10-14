@@ -2,19 +2,42 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import fg from "fast-glob";
 import { hashText } from "../chunker/index.js";
+import { chunkBySymbols, type SymbolSpan } from "../chunker/symbols.js";
+import { getCodeBackend } from "../code/backend.js";
 import type { ProjectContext } from "../context.js";
 import { indexContent } from "../index/indexer.js";
 import type { StorageAdapter } from "../storage/adapter.js";
-import { reindexGit } from "./git.js";
-import { grammarFor, parseFile } from "./treesitter.js";
+import type { FileIndexStatus } from "../storage/types.js";
+import { type GitSummary, gitHead, reindexGit } from "./git.js";
+import { type LinkSummary, linkGraph } from "./link.js";
+import { computeMetrics, type MetricsSummary } from "./metrics.js";
 
 export interface CodeSummary {
   scanned: number;
   parsed: number;
   removed: number;
   unchanged: number;
+  /** Files over the size limit or that the parser could not handle. */
+  skipped: number;
+  /** Files indexed with syntax errors the parser recovered from. */
+  partial: number;
+  /** Files matched by the include globs that no backend parses. */
+  unsupported: number;
   errors: Array<{ path: string; error: string }>;
+  link?: LinkSummary | undefined;
+  metrics?: MetricsSummary | undefined;
+  durationMs: number;
 }
+
+/** Largest file the parser is asked to handle (minified bundles are not worth a graph). */
+export const MAX_CODE_BYTES = 1_500_000;
+
+/**
+ * Bumped when how code is parsed or chunked changes; a database built by an older
+ * version gets one automatic full pass so every file carries symbol chunks and
+ * reference edges without anyone remembering to run `em_reindex {full: true}`.
+ */
+const CODE_INDEX_VERSION = "3";
 
 function listCodeFiles(ctx: ProjectContext): string[] {
   return fg.sync(ctx.config.graph.include, {
@@ -26,28 +49,65 @@ function listCodeFiles(ctx: ProjectContext): string[] {
   });
 }
 
-/** Parse one file into the graph and the code search index. Returns false when unchanged. */
+type FileResult = "parsed" | "unchanged" | "skipped" | "partial";
+
+/**
+ * Parse one file into the graph and the code search index. Search chunks are cut at
+ * the declarations the parser found, so each carries its symbol id. Every outcome
+ * leaves a file_index row with a status, so coverage can be reported later.
+ */
 async function indexOne(
   ctx: ProjectContext,
   db: StorageAdapter,
   rel: string,
   force: boolean,
-): Promise<boolean> {
+): Promise<FileResult> {
   const abs = join(ctx.root, rel);
   const st = statSync(abs);
-  if (st.size > 1_500_000) return false;
+  const backend = getCodeBackend(ctx);
+  const language = backend.languageOf(rel) ?? null;
+  if (st.size > MAX_CODE_BYTES) {
+    const prev = db.fileIndexGet(rel);
+    if (prev?.status !== "skipped" || prev.size !== st.size) {
+      db.fileIndexSet({
+        path: rel,
+        hash: "",
+        mtime: st.mtimeMs,
+        size: st.size,
+        language,
+        document_id: prev?.document_id ?? null,
+        status: "skipped",
+        reason: `over ${Math.round((MAX_CODE_BYTES / 1_000_000) * 10) / 10} MB`,
+      });
+    }
+    return "skipped";
+  }
   const code = readFileSync(abs, "utf8");
   const hash = hashText(code);
   const prev = db.fileIndexGet(rel);
-  if (!force && prev?.hash === hash) return false;
-  const parsed = await parseFile(ctx.root, rel, code);
+  if (!force && prev?.hash === hash && prev.status !== "skipped") return "unchanged";
+  const parsed = await backend.parse(ctx.root, rel, code);
+  const spans: SymbolSpan[] = parsed.nodes
+    .filter(
+      (n) => n.path === rel && n.kind !== "file" && n.kind !== "package" && n.kind !== "route",
+    )
+    .map((n) => ({
+      id: n.id,
+      name: n.name,
+      kind: n.kind,
+      startLine: n.startLine ?? 0,
+      endLine: n.endLine ?? 0,
+    }));
   const doc = indexContent(db, {
     source: "code",
     title: rel,
     uri: `file://${abs}`,
     content: code,
     kind: "code",
+    chunks: spans.length ? chunkBySymbols(code, rel, spans) : undefined,
+    force,
   });
+  const status: FileIndexStatus = parsed.errors ? "partial" : "indexed";
   db.transaction(() => {
     // keep the file node so git-derived meta (hotspots) survives a re-parse
     db.graphDeleteForPath("tree-sitter", rel, { keepFile: true });
@@ -58,11 +118,16 @@ async function indexOne(
       hash,
       mtime: st.mtimeMs,
       size: st.size,
-      language: grammarFor(rel) ?? null,
+      language,
       document_id: doc.documentId,
+      status,
+      reason: parsed.errors
+        ? `${parsed.errors} syntax error${parsed.errors === 1 ? "" : "s"} recovered`
+        : null,
+      symbols: spans.length,
     });
   });
-  return true;
+  return status === "partial" ? "partial" : "parsed";
 }
 
 function removeOne(db: StorageAdapter, rel: string): void {
@@ -74,15 +139,60 @@ function removeOne(db: StorageAdapter, rel: string): void {
   });
 }
 
+/** Link pass + metrics; run after anything changed the graph. */
+export function finalizeGraph(db: StorageAdapter): { link: LinkSummary; metrics: MetricsSummary } {
+  const link = linkGraph(db);
+  const metrics = computeMetrics(db);
+  return { link, metrics };
+}
+
 /** Full or partial code reindex. With `paths`, only those files are (re)parsed. */
 export async function reindexCode(
   ctx: ProjectContext,
   db: StorageAdapter,
   opts: { paths?: string[] | undefined; full?: boolean | undefined } = {},
 ): Promise<CodeSummary> {
-  const summary: CodeSummary = { scanned: 0, parsed: 0, removed: 0, unchanged: 0, errors: [] };
-  const targets = opts.paths?.length ? opts.paths.filter((p) => grammarFor(p)) : listCodeFiles(ctx);
-  summary.scanned = targets.length;
+  const started = Date.now();
+  const summary: CodeSummary = {
+    scanned: 0,
+    parsed: 0,
+    removed: 0,
+    unchanged: 0,
+    skipped: 0,
+    partial: 0,
+    unsupported: 0,
+    errors: [],
+    durationMs: 0,
+  };
+  const backend = getCodeBackend(ctx);
+  const stale = db.metaGet("code_index_version") !== CODE_INDEX_VERSION;
+  const full = (opts.full ?? false) || (stale && !opts.paths?.length);
+  const partialRun = !!opts.paths?.length;
+  const all = partialRun ? (opts.paths ?? []) : listCodeFiles(ctx);
+  const targets = all.filter((p) => backend.supports(p));
+  const run = partialRun ? undefined : db.indexRunStart("code", gitHead(ctx.root));
+  summary.scanned = all.length;
+  // Files the globs include but no parser handles: recorded once so coverage can show them.
+  for (const rel of all) {
+    if (backend.supports(rel)) continue;
+    summary.unsupported++;
+    if (db.fileIndexGet(rel)?.status === "unsupported") continue;
+    try {
+      const st = statSync(join(ctx.root, rel));
+      db.fileIndexSet({
+        path: rel,
+        hash: "",
+        mtime: st.mtimeMs,
+        size: st.size,
+        language: null,
+        document_id: null,
+        status: "unsupported",
+        reason: `no parser for ${rel.slice(rel.lastIndexOf("."))}`,
+      });
+    } catch {
+      // vanished between glob and stat
+    }
+  }
   for (const rel of targets) {
     try {
       if (!statSafe(join(ctx.root, rel))) {
@@ -92,21 +202,77 @@ export async function reindexCode(
         }
         continue;
       }
-      if (await indexOne(ctx, db, rel, opts.full ?? false)) summary.parsed++;
-      else summary.unchanged++;
+      summary[await indexOne(ctx, db, rel, full)]++;
     } catch (err) {
-      summary.errors.push({ path: rel, error: (err as Error).message });
+      const error = (err as Error).message;
+      summary.errors.push({ path: rel, error });
+      // hash "" makes the next run retry the file
+      try {
+        const st = statSync(join(ctx.root, rel));
+        db.fileIndexSet({
+          path: rel,
+          hash: "",
+          mtime: st.mtimeMs,
+          size: st.size,
+          language: backend.languageOf(rel) ?? null,
+          document_id: db.fileIndexGet(rel)?.document_id ?? null,
+          status: "skipped",
+          reason: "parser error",
+          errors: error.slice(0, 500),
+        });
+      } catch {
+        // ignore
+      }
     }
   }
-  if (!opts.paths?.length) {
+  if (!partialRun) {
     // files that disappeared since the last full scan
-    const live = new Set(targets);
+    const live = new Set(all);
     for (const row of db.fileIndexAll()) {
-      if (!live.has(row.path) && grammarFor(row.path)) {
+      if (!live.has(row.path) && (backend.supports(row.path) || row.status === "unsupported")) {
         removeOne(db, row.path);
         summary.removed++;
       }
     }
+    if (full) db.metaSet("code_index_version", CODE_INDEX_VERSION);
+  }
+  const changed = summary.parsed + summary.partial + summary.removed > 0;
+  if (changed || (db.graphCounts().nodes > 0 && db.metricsCount() === 0)) {
+    const f = finalizeGraph(db);
+    summary.link = f.link;
+    summary.metrics = f.metrics;
+  }
+  summary.durationMs = Date.now() - started;
+  if (!partialRun) {
+    db.metaSet(
+      "coverage_summary",
+      JSON.stringify({
+        at: Date.now(),
+        scanned: summary.scanned,
+        unsupported: summary.unsupported,
+        skipped: summary.skipped,
+        partial: summary.partial,
+        durationMs: summary.durationMs,
+        include: ctx.config.graph.include,
+        exclude: ctx.config.graph.exclude,
+      }),
+    );
+  }
+  if (run !== undefined) {
+    db.indexRunFinish(run, {
+      scanned: summary.scanned,
+      indexed: summary.parsed + summary.partial,
+      unchanged: summary.unchanged,
+      skipped: summary.skipped + summary.unsupported,
+      removed: summary.removed,
+      errors: summary.errors.length,
+      detail: summary.errors.length
+        ? summary.errors
+            .slice(0, 5)
+            .map((e) => `${e.path}: ${e.error}`)
+            .join("\n")
+        : null,
+    });
   }
   return summary;
 }
@@ -129,12 +295,66 @@ export async function drainReindexQueue(ctx: ProjectContext, db: StorageAdapter)
   draining = true;
   try {
     const s = await reindexCode(ctx, db, { paths });
-    return s.parsed + s.removed;
+    return s.parsed + s.partial + s.removed;
   } finally {
     draining = false;
   }
 }
 
-export function reindexGitSignals(ctx: ProjectContext, db: StorageAdapter, full = false) {
-  return reindexGit(db, ctx.root, { maxCommits: ctx.config.git.maxCommits, full });
+export function reindexGitSignals(
+  ctx: ProjectContext,
+  db: StorageAdapter,
+  full = false,
+): GitSummary {
+  const run = db.indexRunStart("git", gitHead(ctx.root));
+  try {
+    const g = reindexGit(db, ctx.root, { maxCommits: ctx.config.git.maxCommits, full });
+    if (g.commits && db.graphCounts().nodes) computeMetrics(db);
+    db.indexRunFinish(run, {
+      scanned: g.commits,
+      indexed: g.files,
+      detail: g.commits ? `${g.coChangeEdges} co-change pairs` : "unchanged",
+    });
+    return g;
+  } catch (err) {
+    db.indexRunFinish(run, { errors: 1, detail: (err as Error).message });
+    throw err;
+  }
+}
+
+/** How stale the index is relative to the working tree and git HEAD. */
+export function indexFreshness(
+  ctx: ProjectContext,
+  db: StorageAdapter,
+): {
+  head: string | undefined;
+  indexedHead: string | undefined;
+  headMatches: boolean;
+  queued: number;
+  /** Indexed files whose content hash no longer matches the file on disk (sampled, max 400). */
+  dirty: string[];
+  lastRun: number | null;
+} {
+  const head = gitHead(ctx.root);
+  const indexedHead = db.metaGet("last_git_sha");
+  const rows = db.fileIndexAll().filter((r) => r.status === "indexed" || r.status === "partial");
+  const dirty: string[] = [];
+  for (const r of rows.slice(0, 400)) {
+    try {
+      const abs = join(ctx.root, r.path);
+      const st = statSync(abs);
+      if (r.mtime !== null && Math.abs(st.mtimeMs - r.mtime) < 1 && st.size === r.size) continue;
+      if (hashText(readFileSync(abs, "utf8")) !== r.hash) dirty.push(r.path);
+    } catch {
+      dirty.push(r.path);
+    }
+  }
+  return {
+    head,
+    indexedHead,
+    headMatches: !!head && head === indexedHead,
+    queued: db.reindexQueueSize(),
+    dirty,
+    lastRun: db.indexRunsRecent(1)[0]?.finished_at ?? null,
+  };
 }

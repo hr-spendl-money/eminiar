@@ -1,10 +1,45 @@
-import { statSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { extname, relative, resolve } from "node:path";
+import type { ProjectContext } from "../context.js";
 import { getContext } from "../context.js";
+import { renderProjectBrief } from "../session/brief.js";
 import { serverAlive } from "../session/server-alive.js";
+import type { StorageAdapter } from "../storage/adapter.js";
+import { getStorage } from "../storage/index.js";
 import { contextModeInstalled, effectiveRoutingMode } from "./coexist.js";
 import { hookLog } from "./log.js";
 import type { HookHandler, HookInput, HookOutput } from "./types.js";
+
+const SYMBOL_KINDS = ["function", "class", "method", "interface", "type", "enum", "variable"];
+
+/** The longest identifier-like run in a Grep/Glob pattern (`parse\w+File` → `parse`). */
+export function literalOf(pattern: string): string | undefined {
+  const runs = pattern.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) ?? [];
+  const best = runs.sort((a, b) => b.length - a.length)[0];
+  return best && !/^(ts|js|tsx|jsx|src|lib|test|spec|index)$/i.test(best) ? best : undefined;
+}
+
+/**
+ * Graph symbols whose name contains the pattern's literal: a jump target instead of a
+ * grep, delivered as context without blocking the call.
+ */
+export function symbolHints(db: StorageAdapter, pattern: string): string | undefined {
+  const lit = literalOf(pattern);
+  if (!lit) return undefined;
+  const nodes = db.graphFindNodes({ query: lit, kinds: SYMBOL_KINDS, limit: 5 });
+  if (!nodes.length) return undefined;
+  const list = nodes
+    .map((n) => `${n.kind} ${n.name} (${n.path}:${n.start_line ?? "?"})`)
+    .join("; ");
+  return `eminiar graph: symbols matching "${lit}": ${list}. em_symbols {name_path, include_body: true} reads one; {mode:"references"} lists its callers.`;
+}
+
+/** Why a file is not fully in the graph, so absence of callers is not over-trusted. */
+export function coverageHint(db: StorageAdapter, rel: string): string | undefined {
+  const row = db.fileIndexGet(rel);
+  if (!row || row.status === "indexed") return undefined;
+  return `eminiar graph: ${rel} is ${row.status}${row.reason ? ` (${row.reason})` : ""}; graph answers about it may be incomplete.`;
+}
 
 interface Suggestion {
   tool: string;
@@ -93,6 +128,54 @@ export function suggest(
   }
 }
 
+/**
+ * Non-blocking context for navigation tools: matching graph symbols for Grep/Glob
+ * patterns, coverage gaps for files about to be read. Never denies anything.
+ */
+function graphContext(ctx: ProjectContext, input: HookInput): string | undefined {
+  try {
+    const db = getStorage(ctx, { vectors: false });
+    if (!db.graphCounts().nodes) return undefined;
+    if (input.tool_name === "Grep" || input.tool_name === "Glob") {
+      const pattern = String(input.tool_input?.pattern ?? "");
+      return pattern ? symbolHints(db, pattern) : undefined;
+    }
+    if (input.tool_name === "Read") {
+      const fp = String(input.tool_input?.file_path ?? "");
+      if (!fp) return undefined;
+      let abs = resolve(ctx.root, fp);
+      try {
+        abs = realpathSync(abs); // the project root is a real path; tool paths may go through symlinks
+      } catch {
+        // missing file: let Read report it
+      }
+      const rel = relative(ctx.root, abs).split("\\").join("/");
+      return rel.startsWith("..") ? undefined : coverageHint(db, rel);
+    }
+  } catch {
+    // hints are optional
+  }
+  return undefined;
+}
+
+function withContext(
+  out: HookOutput | undefined,
+  extra: string | undefined,
+): HookOutput | undefined {
+  if (!extra) return out;
+  if (!out)
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: extra } };
+  const cur = out.hookSpecificOutput?.additionalContext;
+  return {
+    ...out,
+    hookSpecificOutput: {
+      ...out.hookSpecificOutput,
+      hookEventName: "PreToolUse",
+      additionalContext: cur ? `${cur}\n${extra}` : extra,
+    },
+  };
+}
+
 export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefined => {
   if (!input.tool_name || !input.tool_input) return undefined;
   const ctx = getContext(input.cwd);
@@ -103,8 +186,9 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
   if (coexisting && ["Bash", "Read", "Grep", "WebFetch"].includes(input.tool_name))
     return undefined;
 
+  const hint = graphContext(ctx, input);
   const s = suggest(input.tool_name, input.tool_input, ctx.root);
-  if (!s) return undefined;
+  if (!s) return withContext(undefined, hint);
 
   if (mode === "enforce") {
     if (s.prefixPrompt) {
@@ -114,7 +198,10 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "allow",
-          updatedInput: { ...input.tool_input, prompt: s.prefixPrompt + prompt },
+          updatedInput: {
+            ...input.tool_input,
+            prompt: s.prefixPrompt + briefFor(ctx) + prompt,
+          },
         },
       };
     }
@@ -126,21 +213,39 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
         "info",
         `enforce → annotate for ${input.tool_name}: no eminiar MCP server running for ${ctx.root}`,
       );
-      return annotate(
-        s,
-        " eminiar MCP server is not running, so this call is allowed; /em-doctor explains.",
+      return withContext(
+        annotate(
+          s,
+          " eminiar MCP server is not running, so this call is allowed; /em-doctor explains.",
+        ),
+        hint,
       );
     }
     return {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: `eminiar: ${s.reason}. Retry with ${s.tool}.`,
+        permissionDecisionReason: `eminiar: ${s.reason}. Retry with ${s.tool}.${hint ? ` ${hint}` : ""}`,
       },
     };
   }
-  return annotate(s);
+  // Annotate mode: subagents get the project brief as context since their prompt is untouched.
+  const extra = s.prefixPrompt ? [briefFor(ctx).trim(), hint].filter(Boolean).join("\n") : hint;
+  return withContext(annotate(s), extra || undefined);
 };
+
+/** The project brief for a subagent prompt (empty when the graph is not built yet). */
+function briefFor(ctx: ProjectContext): string {
+  try {
+    const db = getStorage(ctx, { vectors: false });
+    const brief = renderProjectBrief(ctx, db, 1200);
+    return brief
+      ? `Project brief (eminiar):\n${brief}\nVerify structure with em_symbols / em_graph_impact before reading files; check em_index_status before claiming something is unused.\n\n`
+      : "";
+  } catch {
+    return "";
+  }
+}
 
 function annotate(s: Suggestion, note = ""): HookOutput {
   return {

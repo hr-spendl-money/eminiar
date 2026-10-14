@@ -8,13 +8,18 @@ import type {
   DocumentRow,
   EventInput,
   EventRow,
+  FileIndexInput,
   FileIndexRow,
   FtsHit,
   GraphEdge,
   GraphEdgeRow,
+  GraphMetricInput,
+  GraphMetricRow,
   GraphNode,
   GraphNodeRow,
   GraphSource,
+  IndexRunRow,
+  IndexRunSummary,
   MemoryInput,
   MemoryRow,
   PurgeScope,
@@ -78,6 +83,22 @@ export class SqliteAdapter implements StorageAdapter {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma("foreign_keys = ON");
+    // em_regexp(pattern, flags, text) backs chunkRegexSearch; compiled patterns are cached.
+    const compiled = new Map<string, RegExp>();
+    this.db.function("em_regexp", { deterministic: true }, (pattern, flags, text) => {
+      const key = `${String(flags ?? "")}/${String(pattern)}`;
+      let re = compiled.get(key);
+      if (!re) {
+        try {
+          re = new RegExp(String(pattern), String(flags ?? ""));
+        } catch {
+          return 0;
+        }
+        if (compiled.size > 64) compiled.clear();
+        compiled.set(key, re);
+      }
+      return re.test(String(text ?? "")) ? 1 : 0;
+    });
     this.vectors = opts.vectors ?? true;
     if (this.vectors) sqliteVec.load(this.db);
     this.migrate(opts.dims ?? 384);
@@ -136,8 +157,8 @@ export class SqliteAdapter implements StorageAdapter {
         );
       const id = Number(info.lastInsertRowid);
       const ins = this.db.prepare(
-        `INSERT INTO chunks (document_id, ord, title, body, content_type, start_line, end_line, hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO chunks (document_id, ord, title, body, content_type, start_line, end_line, hash, symbol_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const c of chunks) {
         ins.run(
@@ -149,6 +170,7 @@ export class SqliteAdapter implements StorageAdapter {
           c.startLine ?? null,
           c.endLine ?? null,
           c.hash,
+          c.symbolId ?? null,
         );
       }
       return { id, created: true };
@@ -225,6 +247,7 @@ export class SqliteAdapter implements StorageAdapter {
         end_line: r.end_line as number | null,
         hash: r.hash as string,
         embedded: r.embedded as number,
+        symbol_id: (r.symbol_id as string | null) ?? null,
         document,
       };
     });
@@ -249,6 +272,32 @@ export class SqliteAdapter implements StorageAdapter {
       .prepare(`${SqliteAdapter.CHUNK_SELECT} WHERE c.document_id = ? ORDER BY c.ord`)
       .all(documentId) as Row[];
     return this.hydrate(rows);
+  }
+
+  chunksForSymbol(symbolId: string): ChunkWithDoc[] {
+    const rows = this.db
+      .prepare(`${SqliteAdapter.CHUNK_SELECT} WHERE c.symbol_id = ? ORDER BY c.document_id, c.ord`)
+      .all(symbolId) as Row[];
+    return this.hydrate(rows);
+  }
+
+  chunkRegexSearch(
+    pattern: string,
+    flags: string,
+    limit: number,
+    filters?: SearchFilters,
+  ): number[] {
+    if (pattern.length > 200) throw new Error("regex pattern is too long (max 200 chars)");
+    new RegExp(pattern, flags); // surfaces a syntax error before the scan
+    const { where, params } = filterSql(filters);
+    const rows = this.db
+      .prepare(
+        `SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document_id
+         WHERE em_regexp(?, ?, c.body) = 1${where}
+         ORDER BY d.created_at DESC, c.ord LIMIT ?`,
+      )
+      .all(pattern, flags, ...params, limit) as Array<{ id: number }>;
+    return rows.map((r) => r.id);
   }
 
   // --- lexical search ----------------------------------------------------
@@ -611,7 +660,9 @@ export class SqliteAdapter implements StorageAdapter {
   graphFindNodes(opts: {
     query?: string | undefined;
     kind?: string | undefined;
+    kinds?: string[] | undefined;
     path?: string | undefined;
+    pathPrefix?: string | undefined;
     limit?: number | undefined;
   }): GraphNodeRow[] {
     const clauses: string[] = [];
@@ -623,10 +674,17 @@ export class SqliteAdapter implements StorageAdapter {
     if (opts.kind) {
       clauses.push("kind = ?");
       params.push(opts.kind);
+    } else if (opts.kinds?.length) {
+      clauses.push(`kind IN (${opts.kinds.map(() => "?").join(",")})`);
+      params.push(...opts.kinds);
     }
     if (opts.path) {
       clauses.push("path LIKE ?");
       params.push(`%${opts.path}%`);
+    }
+    if (opts.pathPrefix) {
+      clauses.push("path LIKE ? ESCAPE '\\'");
+      params.push(`${opts.pathPrefix.replace(/[%_\\]/g, "\\$&")}%`);
     }
     params.push(opts.limit ?? 20);
     return this.db
@@ -635,6 +693,82 @@ export class SqliteAdapter implements StorageAdapter {
          ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, length(name), name LIMIT ?`,
       )
       .all(...params.slice(0, -1), opts.query ?? "", params[params.length - 1]) as GraphNodeRow[];
+  }
+
+  graphNodesByKind(kinds: string[]): GraphNodeRow[] {
+    if (!kinds.length) return [];
+    return this.db
+      .prepare(
+        `SELECT * FROM graph_nodes WHERE kind IN (${kinds.map(() => "?").join(",")}) ORDER BY path, start_line`,
+      )
+      .all(...kinds) as GraphNodeRow[];
+  }
+
+  graphNodesAtLines(path: string, startLine: number, endLine: number): GraphNodeRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM graph_nodes WHERE path = ? AND kind != 'file' AND start_line IS NOT NULL
+           AND start_line <= ? AND end_line >= ?
+         ORDER BY (end_line - start_line) ASC, start_line ASC`,
+      )
+      .all(path, endLine, startLine) as GraphNodeRow[];
+  }
+
+  graphEdgesAll(kinds?: string[]): GraphEdgeRow[] {
+    if (kinds?.length) {
+      return this.db
+        .prepare(`SELECT * FROM graph_edges WHERE kind IN (${kinds.map(() => "?").join(",")})`)
+        .all(...kinds) as GraphEdgeRow[];
+    }
+    return this.db.prepare("SELECT * FROM graph_edges").all() as GraphEdgeRow[];
+  }
+
+  graphDanglingEdges(prefix: string): GraphEdgeRow[] {
+    return this.db
+      .prepare(
+        `SELECT e.* FROM graph_edges e LEFT JOIN graph_nodes n ON n.id = e.dst
+         WHERE n.id IS NULL AND e.dst LIKE ? ESCAPE '\\'`,
+      )
+      .all(`${prefix.replace(/[%_\\]/g, "\\$&")}%`) as GraphEdgeRow[];
+  }
+
+  graphDeleteEdges(edges: Array<Pick<GraphEdge, "src" | "dst" | "kind" | "source">>): void {
+    if (!edges.length) return;
+    const stmt = this.db.prepare(
+      "DELETE FROM graph_edges WHERE src = ? AND dst = ? AND kind = ? AND source = ?",
+    );
+    this.transaction(() => {
+      for (const e of edges) stmt.run(e.src, e.dst, e.kind, e.source);
+    });
+  }
+
+  graphDegrees(kinds: string[]): Map<string, { fanIn: number; fanOut: number }> {
+    const out = new Map<string, { fanIn: number; fanOut: number }>();
+    if (!kinds.length) return out;
+    const ph = kinds.map(() => "?").join(",");
+    const get = (id: string) => {
+      let d = out.get(id);
+      if (!d) {
+        d = { fanIn: 0, fanOut: 0 };
+        out.set(id, d);
+      }
+      return d;
+    };
+    for (const r of this.db
+      .prepare(
+        `SELECT dst id, COUNT(DISTINCT src) n FROM graph_edges WHERE kind IN (${ph}) GROUP BY dst`,
+      )
+      .all(...kinds) as Array<{ id: string; n: number }>) {
+      get(r.id).fanIn = r.n;
+    }
+    for (const r of this.db
+      .prepare(
+        `SELECT src id, COUNT(DISTINCT dst) n FROM graph_edges WHERE kind IN (${ph}) GROUP BY src`,
+      )
+      .all(...kinds) as Array<{ id: string; n: number }>) {
+      get(r.id).fanOut = r.n;
+    }
+    return out;
   }
 
   private edgesWhere(col: "src" | "dst", ids: string[], kinds?: string[]): GraphEdgeRow[] {
@@ -687,6 +821,11 @@ export class SqliteAdapter implements StorageAdapter {
           .prepare(`DELETE FROM graph_edges WHERE source = ? AND src IN (${ph})`)
           .run(source, ...slice);
       }
+      // Every symbol of the file shares the `sym:<path>#` prefix, so this also drops
+      // edges whose source node never existed or no longer does (e.g. from a parser bug).
+      this.db
+        .prepare("DELETE FROM graph_edges WHERE source = ? AND src LIKE ? ESCAPE '\\'")
+        .run(source, `sym:${path.replace(/[%_\\]/g, "\\$&")}#%`);
       if (opts.keepFile) {
         this.db
           .prepare("DELETE FROM graph_nodes WHERE source = ? AND path = ? AND kind != 'file'")
@@ -720,10 +859,90 @@ export class SqliteAdapter implements StorageAdapter {
     return { nodes, edges, byKind };
   }
 
+  graphNodeCounts(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const r of this.db
+      .prepare("SELECT kind, COUNT(*) n FROM graph_nodes GROUP BY kind")
+      .all() as Array<{ kind: string; n: number }>) {
+      out[r.kind] = r.n;
+    }
+    return out;
+  }
+
   graphFileNodes(): GraphNodeRow[] {
     return this.db
       .prepare("SELECT * FROM graph_nodes WHERE kind = 'file' ORDER BY path")
       .all() as GraphNodeRow[];
+  }
+
+  // --- graph metrics ------------------------------------------------------
+
+  metricsReplace(rows: GraphMetricInput[]): void {
+    const stmt = this.db.prepare(
+      `INSERT INTO graph_metrics (node_id, kind, path, fan_in, fan_out, loc, complexity, commits_90d, score, cluster, updated_at)
+       VALUES (@node_id, @kind, @path, @fan_in, @fan_out, @loc, @complexity, @commits_90d, @score, @cluster, @updated_at)`,
+    );
+    const now = Date.now();
+    this.transaction(() => {
+      this.db.exec("DELETE FROM graph_metrics");
+      for (const r of rows)
+        stmt.run({ ...r, path: r.path ?? null, cluster: r.cluster ?? null, updated_at: now });
+    });
+  }
+
+  metricsGet(ids: string[]): GraphMetricRow[] {
+    if (!ids.length) return [];
+    const out: GraphMetricRow[] = [];
+    for (let i = 0; i < ids.length; i += 500) {
+      const slice = ids.slice(i, i + 500);
+      out.push(
+        ...(this.db
+          .prepare(
+            `SELECT * FROM graph_metrics WHERE node_id IN (${slice.map(() => "?").join(",")})`,
+          )
+          .all(...slice) as GraphMetricRow[]),
+      );
+    }
+    return out;
+  }
+
+  metricsTop(opts: {
+    orderBy?: "score" | "fan_in" | "fan_out" | "complexity" | "loc" | "commits_90d" | undefined;
+    kind?: string | undefined;
+    kinds?: string[] | undefined;
+    pathPrefix?: string | undefined;
+    cluster?: number | undefined;
+    limit?: number | undefined;
+  }): GraphMetricRow[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (opts.kind) {
+      clauses.push("kind = ?");
+      params.push(opts.kind);
+    } else if (opts.kinds?.length) {
+      clauses.push(`kind IN (${opts.kinds.map(() => "?").join(",")})`);
+      params.push(...opts.kinds);
+    }
+    if (opts.pathPrefix) {
+      clauses.push("path LIKE ? ESCAPE '\\'");
+      params.push(`${opts.pathPrefix.replace(/[%_\\]/g, "\\$&")}%`);
+    }
+    if (opts.cluster !== undefined) {
+      clauses.push("cluster = ?");
+      params.push(opts.cluster);
+    }
+    const order = opts.orderBy ?? "score";
+    params.push(opts.limit ?? 20);
+    return this.db
+      .prepare(
+        `SELECT * FROM graph_metrics ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+         ORDER BY ${order} DESC, fan_in DESC, node_id LIMIT ?`,
+      )
+      .all(...params) as GraphMetricRow[];
+  }
+
+  metricsCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) n FROM graph_metrics").get() as { n: number }).n;
   }
 
   // --- file index & reindex queue ---------------------------------------
@@ -735,22 +954,99 @@ export class SqliteAdapter implements StorageAdapter {
   }
 
   fileIndexAll(): FileIndexRow[] {
-    return this.db.prepare("SELECT * FROM file_index").all() as FileIndexRow[];
+    return this.db.prepare("SELECT * FROM file_index ORDER BY path").all() as FileIndexRow[];
   }
 
-  fileIndexSet(row: Omit<FileIndexRow, "indexed_at">): void {
+  fileIndexSet(row: FileIndexInput): void {
     this.db
       .prepare(
-        `INSERT INTO file_index (path, hash, mtime, size, language, indexed_at, document_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO file_index (path, hash, mtime, size, language, indexed_at, document_id, status, reason, symbols, errors)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(path) DO UPDATE SET hash = excluded.hash, mtime = excluded.mtime, size = excluded.size,
-           language = excluded.language, indexed_at = excluded.indexed_at, document_id = excluded.document_id`,
+           language = excluded.language, indexed_at = excluded.indexed_at, document_id = excluded.document_id,
+           status = excluded.status, reason = excluded.reason, symbols = excluded.symbols, errors = excluded.errors`,
       )
-      .run(row.path, row.hash, row.mtime, row.size, row.language, Date.now(), row.document_id);
+      .run(
+        row.path,
+        row.hash,
+        row.mtime,
+        row.size,
+        row.language,
+        Date.now(),
+        row.document_id,
+        row.status ?? "indexed",
+        row.reason ?? null,
+        row.symbols ?? null,
+        row.errors ?? null,
+      );
   }
 
   fileIndexDelete(path: string): void {
     this.db.prepare("DELETE FROM file_index WHERE path = ?").run(path);
+  }
+
+  fileIndexSummary(): {
+    byStatus: Record<string, number>;
+    reasons: Array<{ reason: string; n: number }>;
+    lastIndexedAt: number | null;
+  } {
+    const byStatus: Record<string, number> = {};
+    for (const r of this.db
+      .prepare("SELECT status, COUNT(*) n FROM file_index GROUP BY status")
+      .all() as Array<{ status: string; n: number }>) {
+      byStatus[r.status] = r.n;
+    }
+    const reasons = this.db
+      .prepare(
+        "SELECT reason, COUNT(*) n FROM file_index WHERE reason IS NOT NULL GROUP BY reason ORDER BY n DESC LIMIT 10",
+      )
+      .all() as Array<{ reason: string; n: number }>;
+    const last = this.db.prepare("SELECT MAX(indexed_at) t FROM file_index").get() as {
+      t: number | null;
+    };
+    return { byStatus, reasons, lastIndexedAt: last.t ?? null };
+  }
+
+  reindexQueueSize(): number {
+    return (this.db.prepare("SELECT COUNT(*) n FROM reindex_queue").get() as { n: number }).n;
+  }
+
+  indexRunStart(scope: string, headSha?: string | null): number {
+    const info = this.db
+      .prepare("INSERT INTO index_runs (scope, started_at, head_sha) VALUES (?, ?, ?)")
+      .run(scope, Date.now(), headSha ?? null);
+    // keep the log short
+    this.db
+      .prepare(
+        "DELETE FROM index_runs WHERE id NOT IN (SELECT id FROM index_runs ORDER BY id DESC LIMIT 50)",
+      )
+      .run();
+    return Number(info.lastInsertRowid);
+  }
+
+  indexRunFinish(id: number, s: IndexRunSummary): void {
+    this.db
+      .prepare(
+        `UPDATE index_runs SET finished_at = ?, scanned = ?, indexed = ?, unchanged = ?, skipped = ?,
+           removed = ?, errors = ?, detail = ? WHERE id = ?`,
+      )
+      .run(
+        Date.now(),
+        s.scanned ?? 0,
+        s.indexed ?? 0,
+        s.unchanged ?? 0,
+        s.skipped ?? 0,
+        s.removed ?? 0,
+        s.errors ?? 0,
+        s.detail ?? null,
+        id,
+      );
+  }
+
+  indexRunsRecent(limit: number): IndexRunRow[] {
+    return this.db
+      .prepare("SELECT * FROM index_runs ORDER BY id DESC LIMIT ?")
+      .all(limit) as IndexRunRow[];
   }
 
   reindexQueuePush(path: string, reason: string): void {
@@ -778,8 +1074,8 @@ export class SqliteAdapter implements StorageAdapter {
     const info = this.db
       .prepare(
         `INSERT INTO memories (kind, content, tags, node_ids, session_id, document_id, created_at,
-                               name, path, file_hash, file_mtime, file_size, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                               name, path, file_hash, file_mtime, file_size, updated_at, status, supersedes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         m.kind,
@@ -795,6 +1091,8 @@ export class SqliteAdapter implements StorageAdapter {
         m.fileMtime ?? null,
         m.fileSize ?? null,
         m.updatedAt ?? null,
+        m.status ?? null,
+        m.supersedes ?? null,
       );
     return Number(info.lastInsertRowid);
   }
@@ -803,6 +1101,7 @@ export class SqliteAdapter implements StorageAdapter {
     opts: {
       kind?: string | undefined;
       topic?: string | undefined;
+      status?: string | undefined;
       limit?: number | undefined;
     } = {},
   ): MemoryRow[] {
@@ -811,6 +1110,10 @@ export class SqliteAdapter implements StorageAdapter {
     if (opts.kind) {
       where += " AND kind = ?";
       params.push(opts.kind);
+    }
+    if (opts.status) {
+      where += " AND COALESCE(status, 'accepted') = ?";
+      params.push(opts.status);
     }
     if (opts.topic) {
       where += " AND name LIKE ? ESCAPE '\\'";
@@ -842,7 +1145,7 @@ export class SqliteAdapter implements StorageAdapter {
         .prepare(
           `UPDATE memories SET kind = ?, content = ?, tags = ?, node_ids = ?, session_id = COALESCE(?, session_id),
              document_id = ?, path = ?, file_hash = ?, file_mtime = ?, file_size = ?,
-             created_at = ?, updated_at = ?
+             created_at = ?, updated_at = ?, status = ?, supersedes = ?
            WHERE id = ?`,
         )
         .run(
@@ -858,6 +1161,8 @@ export class SqliteAdapter implements StorageAdapter {
           m.fileSize ?? existing.file_size,
           m.createdAt ?? existing.created_at,
           m.updatedAt ?? Date.now(),
+          m.status ?? null,
+          m.supersedes ?? null,
           existing.id,
         );
       return existing.id;
@@ -922,7 +1227,9 @@ export class SqliteAdapter implements StorageAdapter {
         );
       }
       if (scope === "graph" || scope === "all") {
-        this.db.exec("DELETE FROM graph_edges; DELETE FROM graph_nodes;");
+        this.db.exec(
+          "DELETE FROM graph_edges; DELETE FROM graph_nodes; DELETE FROM graph_metrics;",
+        );
       }
       if (scope === "memories" || scope === "all") {
         this.db.exec("DELETE FROM memories;");
