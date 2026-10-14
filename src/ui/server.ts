@@ -78,7 +78,8 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
       if (p === "/api/search") {
         const query = q.get("q")?.trim();
         if (!query) return json(res, 400, { error: "q required" });
-        const mode = (q.get("mode") as "hybrid" | "lexical" | "semantic" | null) ?? "hybrid";
+        const mode =
+          (q.get("mode") as "hybrid" | "lexical" | "semantic" | "regex" | null) ?? "hybrid";
         return json(
           res,
           200,
