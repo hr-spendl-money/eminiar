@@ -2,6 +2,8 @@ import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { api, del, type MemoryBody, type MemoryList, type MemoryRowUi, post } from "../api.js";
 import { Empty, ErrorBox, Spinner, SubTabs, Tag, toast, useAsync } from "../components.js";
+import { classifyHref, dashboardHref } from "../markdown/links.js";
+import { Markdown } from "../markdown/Markdown.js";
 import { navigate } from "../router.js";
 import { cls, day, fmt } from "../util.js";
 
@@ -28,6 +30,31 @@ function MemTag({ m }: { m: { kind: string; status?: string | null } }): JSX.Ele
   );
 }
 
+/** A `related:` entry (`mem:name`, `file:path`, `sym:path#Name`) as a chip that navigates. */
+function RelatedRef({ value }: { value: string }): JSX.Element {
+  const href = dashboardHref(classifyHref(value));
+  return href ? (
+    <a class="ref" href={href} title={value}>
+      {value}
+    </a>
+  ) : (
+    <span class="tag" title={value}>
+      {value}
+    </span>
+  );
+}
+
+/** The first non-empty line, without a heading marker, for list previews. */
+function firstLine(content: string): string {
+  return (
+    content
+      .split("\n")
+      .find((l) => l.trim())
+      ?.replace(/^#+\s*/, "")
+      .slice(0, 120) ?? ""
+  );
+}
+
 interface Form {
   kind: string;
   tags: string;
@@ -38,7 +65,34 @@ interface Form {
   supersedes: string;
 }
 
-function Editor({
+const EMPTY: Form = {
+  kind: "fact",
+  tags: "",
+  related: "",
+  body: "",
+  name: "",
+  status: "",
+  supersedes: "",
+};
+
+function formOf(m: MemoryBody): Form {
+  return {
+    kind: m.kind,
+    tags: m.tags.join(", "),
+    related: m.related.join(", "),
+    body: m.body,
+    name: m.name,
+    status: m.status ?? "",
+    supersedes: m.supersedes ?? "",
+  };
+}
+
+/**
+ * The right-hand pane: a memory rendered from its markdown, or (after "edit", or for a
+ * new memory) the form whose textarea is the raw markdown body. Saving goes through
+ * PUT/POST /api/memories, which rewrites the file; the file is re-read for the view.
+ */
+function Detail({
   name,
   kinds,
   statuses,
@@ -55,33 +109,25 @@ function Editor({
     () => (name ? api<MemoryBody>("/api/memories", { name }) : Promise.resolve(undefined)),
     [name],
   );
-  const [f, setF] = useState<Form>({
-    kind: "fact",
-    tags: "",
-    related: "",
-    body: "",
-    name: "",
-    status: "",
-    supersedes: "",
-  });
+  const [editing, setEditing] = useState(!name);
+  const [preview, setPreview] = useState(false);
+  const [f, setF] = useState<Form>(EMPTY);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
+    setEditing(!name);
+    setPreview(false);
+  }, [name]);
+  useEffect(() => {
     const m = body.data;
-    if (name && m)
-      setF({
-        kind: m.kind,
-        tags: m.tags.join(", "),
-        related: m.related.join(", "),
-        body: m.body,
-        name: m.name,
-        status: m.status ?? "",
-        supersedes: m.supersedes ?? "",
-      });
-    if (!name)
-      setF({ kind: "fact", tags: "", related: "", body: "", name: "", status: "", supersedes: "" });
+    if (name && m) setF(formOf(m));
+    if (!name) setF(EMPTY);
   }, [name, body.data]);
   const set = (k: keyof Form) => (e: Event) =>
     setF({ ...f, [k]: (e.target as HTMLInputElement).value });
+  const stopEditing = () => {
+    setEditing(false);
+    setPreview(false);
+  };
   const save = async () => {
     if (!f.body.trim()) return toast("body required", true);
     setBusy(true);
@@ -105,12 +151,19 @@ function Editor({
       toast(
         `${name ? "saved" : "created"} ${r.name}${r.superseded ? ` · ${r.superseded} marked superseded` : ""}`,
       );
+      // Same name: the file changed under us, so re-read it for the rendered view.
+      if (name === r.name) body.reload();
       onSaved(r.name);
+      stopEditing();
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
       setBusy(false);
     }
+  };
+  const cancel = () => {
+    if (body.data) setF(formOf(body.data));
+    stopEditing();
   };
   const remove = async () => {
     if (!name || !confirm(`Delete memory "${name}" and its file?`)) return;
@@ -139,16 +192,63 @@ function Editor({
       toast((e as Error).message, true);
     }
   };
+  const onKey = (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      void save();
+    } else if (e.key === "Escape" && name) {
+      e.preventDefault();
+      cancel();
+    }
+  };
   if (name && body.error) return <ErrorBox error={body.error} />;
   if (name && !body.data) return <Spinner />;
   const m = body.data;
   const isDecision = f.kind === "decision";
+
+  if (name && m && !editing)
+    return (
+      <div>
+        <div class="row" style={{ marginBottom: 6 }}>
+          <b class="grow break">{name}</b>
+          <button type="button" class="sm primary" onClick={() => setEditing(true)}>
+            edit
+          </button>
+          <button type="button" class="sm" onClick={rename}>
+            rename
+          </button>
+          <button type="button" class="sm danger" onClick={remove}>
+            delete
+          </button>
+        </div>
+        <div class="muted small" style={{ marginBottom: 8 }}>
+          {m.path} · created {m.created.slice(0, 10)} · updated {m.updated.slice(0, 10)}
+        </div>
+        <div class="row tight mem-refs" style={{ marginBottom: 12 }}>
+          <MemTag m={m} />
+          {m.tags.map((t) => (
+            <span class="tag">#{t}</span>
+          ))}
+          {m.related.map((r) => (
+            <RelatedRef value={r} />
+          ))}
+          {m.supersedes ? (
+            <span class="muted small">
+              supersedes <RelatedRef value={`mem:${m.supersedes}`} />
+            </span>
+          ) : null}
+        </div>
+        <Markdown source={m.body} />
+      </div>
+    );
+
   return (
     <div>
       <div class="row" style={{ marginBottom: 6 }}>
         <b class="grow break">{name ?? "New memory"}</b>
         {name ? (
           <>
+            <span class="muted small">editing</span>
             <button type="button" class="sm" onClick={rename}>
               rename
             </button>
@@ -223,13 +323,28 @@ function Editor({
         </div>
       )}
       <div class="field">
-        <label>body (markdown)</label>
-        <textarea value={f.body} onInput={set("body")} />
+        <div class="row tight">
+          <label class="grow">body (raw markdown)</label>
+          <a class="small" onClick={() => setPreview(!preview)}>
+            {preview ? "back to markdown" : "preview"}
+          </a>
+        </div>
+        {preview ? (
+          <Markdown class="preview" source={f.body.trim() ? f.body : "_Nothing to preview yet._"} />
+        ) : (
+          <textarea value={f.body} onInput={set("body")} onKeyDown={onKey} spellcheck={false} />
+        )}
       </div>
       <div class="row">
         <button type="button" class="primary" disabled={busy} onClick={save}>
           {busy ? <Spinner /> : name ? "Save" : "Create"}
         </button>
+        {name ? (
+          <button type="button" disabled={busy} onClick={cancel}>
+            Cancel
+          </button>
+        ) : null}
+        <span class="muted small">⌘S / Ctrl+S saves{name ? ", Esc cancels" : ""}</span>
       </div>
     </div>
   );
@@ -261,21 +376,13 @@ function DecisionRecord({ rows }: { rows: MemoryRowUi[] }): JSX.Element {
                 <span class="muted small">{day(r.updated_at)}</span>
                 <span class="spacer" />
                 <a class="small" onClick={() => navigate("memory", { name: r.name })}>
-                  edit
+                  open
                 </a>
               </div>
               {r.supersedes ? <div class="muted small">supersedes {r.supersedes}</div> : null}
-              <pre
-                class="json"
-                style={{
-                  marginTop: 4,
-                  whiteSpace: "pre-wrap",
-                  fontFamily: "inherit",
-                  fontSize: 13,
-                }}
-              >
-                {r.content}
-              </pre>
+              <div style={{ marginTop: 6, fontSize: 13 }}>
+                <Markdown source={r.content} />
+              </div>
             </div>
           ))}
         </div>
@@ -420,7 +527,7 @@ export function Memory({ params }: { params: Record<string, string> }): JSX.Elem
                           {day(m.updated_at)} · {fmt(m.size ?? 0)}B
                         </span>
                       </div>
-                      <div class="p">{m.content.split("\n")[0]?.slice(0, 120)}</div>
+                      <div class="p">{firstLine(m.content)}</div>
                     </div>
                   ))
                 ) : (
@@ -430,7 +537,7 @@ export function Memory({ params }: { params: Record<string, string> }): JSX.Elem
             </div>
             <div class="card">
               {creating || sel ? (
-                <Editor
+                <Detail
                   name={creating ? null : sel}
                   kinds={d?.kinds ?? []}
                   statuses={d?.statuses ?? []}
