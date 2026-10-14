@@ -1,8 +1,9 @@
-# eminiar
+# Eminiar
+*Pronounced ee-MIN-ee-ar*
 
 Local-first context, memory and knowledge graph for Claude Code. Nothing leaves your machine.
 
-eminiar keeps raw tool output out of the model's context window and gives Claude Code local tools
+Eminiar keeps raw tool output out of the model's context window and gives Claude Code local tools
 that make it work better:
 
 - **Sandbox** — `em_execute`, `em_batch_execute`, `em_execute_file`: run shell / JS / TS (plus
@@ -148,8 +149,3 @@ claude --plugin-dir "$PWD"
 
 Storage goes through `src/storage/adapter.ts`; `src/storage/sqlite/` is the only module with SQL,
 so a Postgres/pgvector or libSQL adapter can back a team-shared knowledge base later.
-
-## Credits
-
-Clean-room reimplementation of the ideas in [context-mode](https://github.com/mksglu/context-mode)
-(sandbox + FTS5 index + hook-driven session memory), extended with local embeddings and a code graph.
