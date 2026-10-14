@@ -30,7 +30,7 @@ function referrerLabel(db: StorageAdapter, id: string, nodes: Map<string, GraphN
 export const emSymbols = defineTool({
   name: "em_symbols",
   description:
-    "Symbol-level code navigation on the tree-sitter graph (TS/JS): overview lists every symbol in a file with kinds and line ranges; find matches a name path (`method`, `Class/method`, `Class.method`, `/Class/method` for whole-name, `src/x.ts#Class.method`), optionally with the body; references lists what calls, references, extends or implements a symbol, grouped by the referencing symbol. Compact output; prefer this over reading whole files.",
+    "Symbol-level code navigation on the tree-sitter graph (TS/JS, Python, Go): overview lists every symbol in a file with kinds and line ranges; find matches a name path (`method`, `Class/method`, `Class.method`, `/Class/method` for whole-name, `src/x.ts#Class.method`), optionally with the body; references lists what calls, references, extends or implements a symbol, grouped by the referencing symbol. Compact output; prefer this over reading whole files.",
   schema: {
     mode: z.enum(["overview", "find", "references"]).optional().describe("default find"),
     file: z

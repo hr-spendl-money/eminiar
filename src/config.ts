@@ -51,7 +51,16 @@ export const ConfigSchema = z.object({
     .object({
       include: z
         .array(z.string())
-        .default(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]),
+        .default([
+          "**/*.ts",
+          "**/*.tsx",
+          "**/*.js",
+          "**/*.jsx",
+          "**/*.mjs",
+          "**/*.cjs",
+          "**/*.py",
+          "**/*.go",
+        ]),
       exclude: z
         .array(z.string())
         .default([
@@ -61,6 +70,12 @@ export const ConfigSchema = z.object({
           "**/.git/**",
           "**/coverage/**",
           "**/*.d.ts",
+          "**/.venv/**",
+          "**/venv/**",
+          "**/__pycache__/**",
+          "**/site-packages/**",
+          "**/vendor/**",
+          "**/*.min.js",
         ]),
     })
     .prefault({}),

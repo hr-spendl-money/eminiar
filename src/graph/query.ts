@@ -372,9 +372,10 @@ export function deadCode(db: StorageAdapter, limit = 30): DeadCodeCandidate[] {
       )
       .map((e) => e.dst),
   );
+  const handlers = new Set(db.graphEdgesAll(["handles"]).map((e) => e.src));
   const out: DeadCodeCandidate[] = [];
   for (const s of symbols) {
-    if (!s.path || TEST_PATH.test(s.path)) continue;
+    if (!s.path || TEST_PATH.test(s.path) || handlers.has(s.id)) continue;
     const short = s.name.split(".").pop()!;
     if (LIFECYCLE.has(short) || short.startsWith("_")) continue;
     if (degrees.get(s.id)?.fanIn) continue;

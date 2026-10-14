@@ -60,6 +60,41 @@ function viaReexports(
   return undefined;
 }
 
+/**
+ * Go: every file in a directory is one package, so an identifier the parser could not
+ * find in its own file is looked up in the sibling files of that directory.
+ */
+function goSibling(db: StorageAdapter, path: string, name: string): string | undefined {
+  const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+  const hits = db
+    .graphFindNodes({ query: name, pathPrefix: dir, limit: 50 })
+    .filter(
+      (n) =>
+        n.name === name &&
+        n.path?.endsWith(".go") &&
+        !n.path.slice(dir.length).includes("/") &&
+        n.path !== path,
+    );
+  return hits[0]?.id;
+}
+
+/** A member defined on an ancestor class (`Admin.greet` → `User.greet` via `extends`). */
+function inherited(
+  db: StorageAdapter,
+  classId: string,
+  member: string,
+  depth: number,
+): string | undefined {
+  if (depth > 3) return undefined;
+  for (const e of db.graphEdgesFrom([classId], ["extends"])) {
+    const cand = `${e.dst}.${member}`;
+    if (db.graphGetNode(cand)) return cand;
+    const deeper = inherited(db, e.dst, member, depth + 1);
+    if (deeper) return deeper;
+  }
+  return undefined;
+}
+
 function defaultExportOf(db: StorageAdapter, path: string): string | undefined {
   const f = db.graphGetNode(fileId(path));
   if (!f?.meta) return undefined;
@@ -114,9 +149,19 @@ export function linkGraph(db: StorageAdapter): LinkSummary {
       let target: string | undefined;
       if (head === "default") target = defaultExportOf(db, path);
       if (!target) target = viaReexports(db, path, head, 0, new Set());
-      if (target && name.includes(".")) {
-        const member = `${target}.${name.slice(name.indexOf(".") + 1)}`;
-        target = db.graphGetNode(member) ? member : undefined;
+      let direct = false;
+      if (!target && path.endsWith(".go")) {
+        // the whole qualified name (`Store.touch`) in a sibling, else the type head
+        const full = goSibling(db, path, name);
+        if (full) {
+          target = full;
+          direct = true;
+        } else target = goSibling(db, path, head);
+      }
+      if (target && name.includes(".") && !direct) {
+        const rest = name.slice(name.indexOf(".") + 1);
+        const member = `${target}.${rest}`;
+        target = db.graphGetNode(member) ? member : inherited(db, target, rest, 0);
       }
       if (target && target !== e.src) {
         replace(db, e, {

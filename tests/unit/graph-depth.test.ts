@@ -51,7 +51,7 @@ const files: Record<string, string> = {
   "src/cycle/b.ts": 'import { a } from "./a.js";\nexport function b() { return a(); }\n',
   "src/index.ts": 'import { Service } from "./service.js";\nexport { Service };\n',
   "src/cli.ts": 'import { Service } from "./service.js";\nnew Service().run();\n',
-  "notes.py": "def py(): pass\n",
+  "notes.rb": "def rb; end\n",
 };
 
 function git(cmd: string) {
@@ -77,10 +77,10 @@ beforeAll(async () => {
     mkdirSync(join(root, p, ".."), { recursive: true });
     writeFileSync(join(root, p), c);
   }
-  // a file over the size limit, and config that includes python so it shows as unsupported
+  // a file over the size limit, and config that includes ruby so it shows as unsupported
   writeFileSync(join(root, "src/huge.ts"), `// ${"x".repeat(1_600_000)}\n`);
   resetResolveCache();
-  const config = ConfigSchema.parse({ graph: { include: ["**/*.ts", "**/*.py"] } });
+  const config = ConfigSchema.parse({ graph: { include: ["**/*.ts", "**/*.rb"] } });
   ctx = { root, id: "d", dbPath: join(root, "d.db"), config };
   db = new SqliteAdapter(ctx.dbPath);
   git("init -q");
@@ -145,12 +145,12 @@ describe("index pipeline", () => {
     expect(s.skipped).toBe(1);
     expect(s.unsupported).toBe(1);
     expect(db.fileIndexGet("src/huge.ts")?.status).toBe("skipped");
-    expect(db.fileIndexGet("notes.py")?.status).toBe("unsupported");
+    expect(db.fileIndexGet("notes.rb")?.status).toBe("unsupported");
     expect(db.fileIndexGet("src/service.ts")).toMatchObject({ status: "indexed", symbols: 4 });
     const summary = db.fileIndexSummary();
     expect(summary.byStatus).toMatchObject({ skipped: 1, unsupported: 1 });
     expect(summary.reasons.map((r) => r.reason)).toEqual(
-      expect.arrayContaining(["over 1.5 MB", "no parser for .py"]),
+      expect.arrayContaining(["over 1.5 MB", "no parser for .rb"]),
     );
 
     // link pass: the call through the barrel now points at the real symbol

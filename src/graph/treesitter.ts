@@ -1,52 +1,13 @@
-import { existsSync } from "node:fs";
-import { extname, join } from "node:path";
-import type { Language as TSLanguage, Node as TSNode, Parser as TSParser } from "web-tree-sitter";
+import type { Node as TSNode } from "web-tree-sitter";
 import type { GraphEdge, GraphNode } from "../storage/types.js";
-import { pluginRoot } from "../version.js";
 import { fileId, pkgId, symId } from "./ids.js";
+import { parseGo } from "./languages/go.js";
+import { type Grammar, getParser, grammarFor } from "./languages/parser.js";
+import { parsePython } from "./languages/python.js";
 import { packageName, resolveImport } from "./resolve.js";
 import { fileRoutes, frameworkOf, ROUTE_METHODS, routeId, routePathFromLiteral } from "./routes.js";
 
-export type Grammar = "typescript" | "tsx" | "javascript";
-
-export function grammarFor(path: string): Grammar | undefined {
-  switch (extname(path).toLowerCase()) {
-    case ".ts":
-    case ".mts":
-    case ".cts":
-      return "typescript";
-    case ".tsx":
-      return "tsx";
-    case ".js":
-    case ".jsx":
-    case ".mjs":
-    case ".cjs":
-      return "javascript";
-    default:
-      return undefined;
-  }
-}
-
-let parserMod: typeof import("web-tree-sitter") | undefined;
-let parser: TSParser | undefined;
-const languages = new Map<Grammar, TSLanguage>();
-
-async function getParser(grammar: Grammar): Promise<TSParser> {
-  if (!parserMod) {
-    parserMod = await import("web-tree-sitter");
-    await parserMod.Parser.init();
-    parser = new parserMod.Parser();
-  }
-  let lang = languages.get(grammar);
-  if (!lang) {
-    const file = join(pluginRoot(), "vendor", "grammars", `${grammar}.wasm`);
-    if (!existsSync(file)) throw new Error(`grammar missing: ${file}`);
-    lang = await parserMod.Language.load(file);
-    languages.set(grammar, lang);
-  }
-  parser!.setLanguage(lang);
-  return parser!;
-}
+export { type Grammar, grammarFor };
 
 export interface ParsedFile {
   nodes: GraphNode[];
@@ -105,6 +66,8 @@ function complexityOf(n: TSNode): number {
 export async function parseFile(root: string, rel: string, code: string): Promise<ParsedFile> {
   const grammar = grammarFor(rel);
   if (!grammar) return { nodes: [], edges: [], exports: [] };
+  if (grammar === "python") return parsePython(root, rel, code);
+  if (grammar === "go") return parseGo(root, rel, code);
   const p = await getParser(grammar);
   const tree = p.parse(code);
   if (!tree) return { nodes: [], edges: [], exports: [] };

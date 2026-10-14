@@ -32,12 +32,31 @@ const FRAMEWORK_PKGS: Record<string, string> = {
   polka: "polka",
   "@nestjs/common": "nest",
   elysia: "elysia",
+  // Python
+  flask: "flask",
+  fastapi: "fastapi",
+  starlette: "starlette",
+  aiohttp: "aiohttp",
+  sanic: "sanic",
+  tornado: "tornado",
+  django: "django",
+  // Go (import path prefixes)
+  "net/http": "net/http",
+  "github.com/gin-gonic/gin": "gin",
+  "github.com/go-chi/chi": "chi",
+  "github.com/labstack/echo": "echo",
+  "github.com/gorilla/mux": "gorilla",
+  "github.com/gofiber/fiber": "fiber",
+  "github.com/julienschmidt/httprouter": "httprouter",
 };
 
 export function frameworkOf(importedPackages: Iterable<string>): string | undefined {
   for (const p of importedPackages) {
     const f = FRAMEWORK_PKGS[p];
     if (f) return f;
+    for (const [key, name] of Object.entries(FRAMEWORK_PKGS)) {
+      if (key.includes("/") && p.startsWith(`${key}/`)) return name;
+    }
   }
   return undefined;
 }
