@@ -180,7 +180,12 @@ export const emDocs = defineTool({
         "add: take candidates from a fresh discovery — recommended = local docs + third-party services + APIs found in code (small); infra | catalog | registry | all widen it",
       ),
     sync: z.boolean().optional().describe("add: index right away (default true)"),
-    force: z.boolean().optional().describe("sync: refetch ignoring the cache and drop stale pages"),
+    force: z
+      .boolean()
+      .optional()
+      .describe(
+        "sync: refetch ignoring the cache and drop stale pages; add with pick: also refresh already-registered candidates (new URLs, crawl budgets)",
+      ),
     include_dev: z.boolean().optional().describe("discover: also devDependencies"),
     subprojects: z
       .boolean()

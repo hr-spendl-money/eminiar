@@ -110,8 +110,13 @@ function candidateToInput(c: LocalCandidate | ProviderCandidate): AddInput {
   };
 }
 
-/** Which discovery candidates a `pick` selects; `names` narrows further. */
-export function pickCandidates(d: Discovery, pick: Pick, names?: string[] | undefined): AddInput[] {
+/** Which discovery candidates a `pick` selects; `names` narrows further; registered ones are skipped unless asked. */
+export function pickCandidates(
+  d: Discovery,
+  pick: Pick,
+  names?: string[] | undefined,
+  opts: { includeRegistered?: boolean | undefined } = {},
+): AddInput[] {
   const wantLocal = pick === "local" || pick === "recommended" || pick === "all";
   const wants = (p: ProviderCandidate): boolean => {
     const tier = p.tier ?? "library";
@@ -137,7 +142,7 @@ export function pickCandidates(d: Discovery, pick: Pick, names?: string[] | unde
   const out: AddInput[] = [];
   const seen = new Set<string>();
   const take = (c: LocalCandidate | ProviderCandidate) => {
-    if (c.registered || seen.has(c.name)) return;
+    if ((c.registered && !opts.includeRegistered) || seen.has(c.name)) return;
     if (names?.length && !names.includes(c.name)) return;
     seen.add(c.name);
     out.push(candidateToInput(c));
@@ -266,8 +271,14 @@ export async function addPicked(
   },
 ): Promise<AddOutcome> {
   const d = discoverDocs(ctx, { includeDev: opts.includeDev, subprojects: opts.subprojects });
-  return addDocSources(ctx, db, pickCandidates(d, pick, opts.names), {
-    sync: opts.sync,
-    force: opts.force,
-  });
+  // force also refreshes already-registered candidates (new URLs, crawl budgets) and re-crawls them
+  return addDocSources(
+    ctx,
+    db,
+    pickCandidates(d, pick, opts.names, { includeRegistered: opts.force }),
+    {
+      sync: opts.sync,
+      force: opts.force,
+    },
+  );
 }

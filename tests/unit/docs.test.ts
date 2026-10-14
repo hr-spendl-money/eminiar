@@ -7,7 +7,13 @@ import { getContext, type ProjectContext, resetContextCache } from "../../src/co
 import { addDocSources, pickCandidates, removeDocSource } from "../../src/docs/add.js";
 import { catalogForProvider, catalogLookup } from "../../src/docs/catalog.js";
 import { discoverDocs, rootDomain } from "../../src/docs/discover.js";
-import { docsTag, makeSource, readManifest, upsertSources } from "../../src/docs/manifest.js";
+import {
+  docsTag,
+  makeSource,
+  readManifest,
+  removeSource,
+  upsertSources,
+} from "../../src/docs/manifest.js";
 import { docGuesses, githubRepo, resolveProvider } from "../../src/docs/resolve.js";
 import { looksLikeSpec, specToMarkdown } from "../../src/docs/specs.js";
 import { extractLinks, scopeOf, syncSource } from "../../src/docs/sync.js";
@@ -342,6 +348,21 @@ describe("discovery", () => {
     expect(names).not.toContain("paygate");
     expect(pickCandidates(d, "registry").map((r) => r.name)).toEqual(["some-unknown-lib"]);
     expect(pickCandidates(d, "local", ["docs"]).map((r) => r.name)).toEqual(["docs"]);
+    // registered candidates are skipped unless a forced add asks to refresh them
+    upsertSources(ctx, [
+      {
+        name: "sumsub",
+        kind: "url",
+        urls: ["https://docs.sumsub.com/"],
+        provider: "env:SUMSUB_APP_TOKEN",
+      },
+    ]);
+    const d2 = discoverDocs(ctx);
+    expect(pickCandidates(d2, "service").map((r) => r.name)).not.toContain("sumsub");
+    expect(
+      pickCandidates(d2, "service", undefined, { includeRegistered: true }).map((r) => r.name),
+    ).toContain("sumsub");
+    removeSource(ctx, "sumsub");
   });
 });
 
