@@ -922,6 +922,9 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
     );
   const projects = findProjects(root, opts);
   const includeDev = opts.includeDev ?? ctx.config.docs.discover.includeDev;
+  // external APIs are indexed in full; libraries and infrastructure keep the catalogue's small crawl
+  const full = ctx.config.docs.crawl.api;
+  const crawlFor = (e: CatalogEntry) => (e.tier === "service" ? full : e.crawl);
 
   const local: LocalCandidate[] = [];
   const signals: Signal[] = [];
@@ -1004,7 +1007,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
         provider: `${s.kind}:${s.key}`,
         title: entry.title,
         urls: entry.urls,
-        crawl: entry.crawl,
+        crawl: crawlFor(entry),
         confidence: "catalog",
         tier: entry.tier ?? "library",
         tags: entry.tags,
@@ -1070,7 +1073,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
           provider: `api:${host}`,
           title: entry.title,
           urls: [...entry.urls, ...specUrls],
-          crawl: entry.crawl,
+          crawl: full,
           confidence: "catalog",
           tier: entry.tier ?? "library",
           tags: entry.tags,
@@ -1087,7 +1090,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
           provider: `api:${host}`,
           title: `${domain} API`,
           urls: specUrls,
-          crawl: { depth: specUrls.length ? 0 : 1, maxPages: 20 },
+          crawl: { depth: specUrls.length ? 0 : full.depth, maxPages: full.maxPages },
           confidence: specUrls.length ? "catalog" : "probe",
           usedBy: h.project || ".",
           evidence,
@@ -1110,7 +1113,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
           provider: `link:${host}`,
           title: entry.title,
           urls: entry.urls,
-          crawl: entry.crawl,
+          crawl: full,
           confidence: "catalog",
           tier: entry.tier ?? "library",
           tags: entry.tags,
@@ -1124,7 +1127,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
       if (existing && existing.confidence === "probe") {
         existing.urls = urls;
         existing.confidence = "catalog";
-        existing.crawl = { depth: 1, maxPages: 20 };
+        existing.crawl = full;
         if (!existing.evidence.includes(evidence)) existing.evidence.push(evidence);
         if (!existing.usedBy.includes(l.project || ".")) existing.usedBy.push(l.project || ".");
         continue;
@@ -1134,7 +1137,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
         provider: `link:${host}`,
         title: `${host} (documentation linked from code)`,
         urls,
-        crawl: { depth: 1, maxPages: 20 },
+        crawl: full,
         confidence: "catalog",
         usedBy: l.project || ".",
         evidence,

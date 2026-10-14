@@ -143,9 +143,10 @@ services** the project integrates and the APIs found in code in `.eminiar/docs.j
 them. It is deliberately small: catalogue entries carry a tier, and frameworks (`library`) and
 platform (`infra`) stay out unless you ask (`pick: "infra" | "catalog" | "registry" | "all"`, or
 `names`), because Claude already knows them and their reference sites are large.
-`{action: "add", url | path | provider}` adds one source. URL sources are crawled same-origin
-under the seed's path (default depth 1, **8 pages** per source, pages cut at 120 KB, 7-day
-cache); OpenAPI documents and Postman collections — local or fetched — are rendered one markdown
+`{action: "add", url | path | provider}` adds one source. **External APIs are indexed in full**:
+hosts called from code, documentation linked from code, probed docs sites and service-tier
+catalogue entries get `docs.crawl.api` (depth 2, up to 150 pages); dependencies get the small
+budget (depth 1, **8 pages** per source). Pages are cut at 120 KB and cached 7 days; OpenAPI documents and Postman collections — local or fetched — are rendered one markdown
 section per operation (parameters, request body, responses, schemas) so a lookup returns the exact
 endpoint. Documentation is **lexical-only by default** (`docs.embed: true` turns on vectors), so a
 crawl never queues model work. Pages land in the index under `docs:<name>`; `em_docs {action:

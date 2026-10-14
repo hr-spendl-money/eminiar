@@ -170,7 +170,10 @@ export async function addDocSources(
     let title = input.title;
     let crawl = input.crawl;
     if (!urls.length && !input.path && input.provider) {
-      const r = await resolveProvider(input.provider, { catalog });
+      const r = await resolveProvider(input.provider, {
+        catalog,
+        apiCrawl: ctx.config.docs.crawl.api,
+      });
       out.resolved.push(r);
       if (!r.urls.length) {
         out.failed.push({ name, reason: r.notes ?? `could not resolve ${input.provider}` });

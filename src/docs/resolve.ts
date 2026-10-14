@@ -14,6 +14,8 @@ export interface ResolveOptions {
   timeoutMs?: number | undefined;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch | undefined;
+  /** Crawl budget for external APIs (probed hosts, service-tier catalogue entries). */
+  apiCrawl?: { depth?: number | undefined; maxPages?: number | undefined } | undefined;
 }
 
 async function getJson(
@@ -246,7 +248,7 @@ async function fromApiHost(host: string, opts: ResolveOptions): Promise<Resolved
     title: `${root} API`,
     urls: found.slice(0, 2),
     via: "probe",
-    crawl: { depth: 1, maxPages: 20 },
+    crawl: opts.apiCrawl ?? { depth: 2, maxPages: 150 },
   };
 }
 
@@ -273,7 +275,13 @@ export async function resolveProvider(
 ): Promise<Resolved> {
   const entry = catalogForProvider(provider, opts.catalog);
   if (entry)
-    return { provider, title: entry.title, urls: entry.urls, via: "catalog", crawl: entry.crawl };
+    return {
+      provider,
+      title: entry.title,
+      urls: entry.urls,
+      via: "catalog",
+      crawl: entry.tier === "service" ? (opts.apiCrawl ?? entry.crawl) : entry.crawl,
+    };
   const i = provider.indexOf(":");
   const kind = i === -1 ? "" : provider.slice(0, i);
   const key = i === -1 ? provider : provider.slice(i + 1);

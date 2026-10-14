@@ -22,8 +22,8 @@ Gather the facts with the sandbox, not by reading whole files into context:
    env var prefixes, container images, infrastructure files and third-party API hosts the code
    calls, each mapped to its documentation. Then `em_docs {action: "add", pick: "recommended"}`
    registers and indexes the local docs, the third-party services and the APIs found in code
-   (unknown API hosts are probed for a docs site; a referenced spec URL is used directly). Keep
-   it small: frameworks, infrastructure and registry packages stay out unless the user asks
+   (unknown API hosts are probed for a docs site; a referenced spec URL is used directly; external
+   APIs are crawled in full, dependencies shallowly). Keep it small: frameworks, infrastructure and registry packages stay out unless the user asks
    (`pick: "infra" | "catalog" | "registry"`). Add anything the project clearly depends on that
    came back `unknown` with `{action: "add", name, url}` when you know the URL. Do not paste the
    candidate list into the reply.

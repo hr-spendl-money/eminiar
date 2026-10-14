@@ -129,6 +129,17 @@ export const ConfigSchema = z.object({
             .int()
             .positive()
             .default(120 * 1024),
+          /**
+           * Budget for external APIs — hosts called from code, documentation linked from code,
+           * probed docs sites and service-tier catalogue entries. These are indexed in full;
+           * `depth`/`maxPages` above only cap dependencies (libraries, infrastructure).
+           */
+          api: z
+            .object({
+              depth: z.number().int().min(0).max(3).default(2),
+              maxPages: z.number().int().positive().max(200).default(150),
+            })
+            .prefault({}),
         })
         .prefault({}),
       /**

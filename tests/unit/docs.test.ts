@@ -291,6 +291,13 @@ describe("discovery", () => {
     // api host without a catalogue entry → probed at add time
     expect(prov["paygate-pay"]?.confidence).toBe("probe");
     expect(prov["paygate-pay"]?.provider).toBe("api:api.paygate-pay.com");
+    // external APIs are indexed in full; dependencies keep the catalogue's small crawl
+    expect(prov["paygate-pay"]?.crawl).toEqual({ depth: 2, maxPages: 150 });
+    expect(prov.openai?.crawl).toEqual({ depth: 2, maxPages: 150 });
+    expect(prov.sumsub?.crawl).toEqual({ depth: 2, maxPages: 150 });
+    expect(prov.vendorx?.crawl).toEqual({ depth: 2, maxPages: 150 });
+    expect(prov.moleculer?.crawl).toEqual({ depth: 1, maxPages: 12 });
+    expect(prov.nats?.crawl).toEqual({ depth: 1, maxPages: 12 });
     // a referenced spec url is a complete seed
     expect(prov["acme-pay"]?.urls).toEqual(["https://api.acme-pay.io/openapi.json"]);
     expect(prov["acme-pay"]?.confidence).toBe("catalog");
@@ -585,6 +592,7 @@ describe("resolution", () => {
       }),
     });
     expect(r.via).toBe("probe");
+    expect(r.crawl).toEqual({ depth: 2, maxPages: 150 });
     expect(r.urls).toEqual([
       "https://developer.paygate-pay.com/",
       "https://api.paygate-pay.com/openapi.json",
