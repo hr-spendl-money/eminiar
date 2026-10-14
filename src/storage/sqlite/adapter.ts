@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import type { SessionPatch, StorageAdapter } from "../adapter.js";
+import { topTermsOf } from "../terms.js";
 import type {
   ChunkInput,
   ChunkWithDoc,
@@ -74,6 +75,23 @@ function filterSql(f: SearchFilters | undefined): { where: string; params: unkno
 export class SqliteAdapter implements StorageAdapter {
   readonly db: Database.Database;
   readonly vectors: boolean;
+  private readonly stmts = new Map<string, Database.Statement<unknown[], unknown>>();
+
+  /**
+   * Prepared-statement cache. better-sqlite3 compiles the SQL on every prepare(), so
+   * hot paths (every tool call records stats, every indexed output inserts chunks)
+   * were paying for a parse each time. SQLite re-prepares cached statements itself
+   * after a schema change, so entries never go stale.
+   */
+  private prep(sql: string): Database.Statement<unknown[], unknown> {
+    let s = this.stmts.get(sql);
+    if (!s) {
+      if (this.stmts.size >= 512) this.stmts.clear();
+      s = this.db.prepare(sql);
+      this.stmts.set(sql, s);
+    }
+    return s;
+  }
 
   constructor(
     readonly path: string,
@@ -133,30 +151,28 @@ export class SqliteAdapter implements StorageAdapter {
   upsertDocument(doc: DocumentInput, chunks: ChunkInput[]): { id: number; created: boolean } {
     return this.transaction(() => {
       if (doc.uri) {
-        const existing = this.db
-          .prepare("SELECT id, content_hash FROM documents WHERE uri = ?")
-          .all(doc.uri) as Array<{ id: number; content_hash: string }>;
+        const existing = this.prep("SELECT id, content_hash FROM documents WHERE uri = ?").all(
+          doc.uri,
+        ) as Array<{ id: number; content_hash: string }>;
         const same = existing.find((e) => e.content_hash === doc.contentHash);
         if (same) return { id: same.id, created: false };
         for (const e of existing) this.deleteDocument(e.id);
       }
-      const info = this.db
-        .prepare(
-          `INSERT INTO documents (source, title, uri, content_type, content_hash, session_id, meta, created_at)
+      const info = this.prep(
+        `INSERT INTO documents (source, title, uri, content_type, content_hash, session_id, meta, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          doc.source,
-          doc.title,
-          doc.uri ?? null,
-          doc.contentType,
-          doc.contentHash,
-          doc.sessionId ?? null,
-          doc.meta ? JSON.stringify(doc.meta) : null,
-          Date.now(),
-        );
+      ).run(
+        doc.source,
+        doc.title,
+        doc.uri ?? null,
+        doc.contentType,
+        doc.contentHash,
+        doc.sessionId ?? null,
+        doc.meta ? JSON.stringify(doc.meta) : null,
+        Date.now(),
+      );
       const id = Number(info.lastInsertRowid);
-      const ins = this.db.prepare(
+      const ins = this.prep(
         `INSERT INTO chunks (document_id, ord, title, body, content_type, start_line, end_line, hash, symbol_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
@@ -178,29 +194,25 @@ export class SqliteAdapter implements StorageAdapter {
   }
 
   getDocument(id: number): DocumentRow | undefined {
-    return this.db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as
-      | DocumentRow
-      | undefined;
+    return this.prep("SELECT * FROM documents WHERE id = ?").get(id) as DocumentRow | undefined;
   }
 
   findDocumentByUri(uri: string): DocumentRow | undefined {
-    return this.db
-      .prepare("SELECT * FROM documents WHERE uri = ? ORDER BY created_at DESC LIMIT 1")
-      .get(uri) as DocumentRow | undefined;
+    return this.prep("SELECT * FROM documents WHERE uri = ? ORDER BY created_at DESC LIMIT 1").get(
+      uri,
+    ) as DocumentRow | undefined;
   }
 
   deleteDocument(id: number): void {
     this.transaction(() => {
       if (this.vectors) {
-        this.db
-          .prepare(
-            "DELETE FROM chunk_vec WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-          )
-          .run(id);
+        this.prep(
+          "DELETE FROM chunk_vec WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
+        ).run(id);
       }
       // chunks cascade; FTS rows go via the chunks_ad trigger
-      this.db.prepare("DELETE FROM chunks WHERE document_id = ?").run(id);
-      this.db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+      this.prep("DELETE FROM chunks WHERE document_id = ?").run(id);
+      this.prep("DELETE FROM documents WHERE id = ?").run(id);
     });
   }
 
@@ -260,17 +272,17 @@ export class SqliteAdapter implements StorageAdapter {
 
   getChunks(ids: number[]): ChunkWithDoc[] {
     if (!ids.length) return [];
-    const rows = this.db
-      .prepare(`${SqliteAdapter.CHUNK_SELECT} WHERE c.id IN (${ids.map(() => "?").join(",")})`)
-      .all(...ids) as Row[];
+    const rows = this.prep(
+      `${SqliteAdapter.CHUNK_SELECT} WHERE c.id IN (${ids.map(() => "?").join(",")})`,
+    ).all(...ids) as Row[];
     const byId = new Map(this.hydrate(rows).map((c) => [c.id, c]));
     return ids.map((id) => byId.get(id)).filter((c): c is ChunkWithDoc => !!c);
   }
 
   chunksOfDocument(documentId: number): ChunkWithDoc[] {
-    const rows = this.db
-      .prepare(`${SqliteAdapter.CHUNK_SELECT} WHERE c.document_id = ? ORDER BY c.ord`)
-      .all(documentId) as Row[];
+    const rows = this.prep(
+      `${SqliteAdapter.CHUNK_SELECT} WHERE c.document_id = ? ORDER BY c.ord`,
+    ).all(documentId) as Row[];
     return this.hydrate(rows);
   }
 
@@ -311,14 +323,12 @@ export class SqliteAdapter implements StorageAdapter {
     const table = kind === "porter" ? "chunks_fts_porter" : "chunks_fts_trigram";
     const { where, params } = filterSql(filters);
     try {
-      const rows = this.db
-        .prepare(
-          `SELECT f.rowid id, -bm25(${table}, 5.0, 1.0) score
+      const rows = this.prep(
+        `SELECT f.rowid id, -bm25(${table}, 5.0, 1.0) score
            FROM ${table} f JOIN chunks c ON c.id = f.rowid JOIN documents d ON d.id = c.document_id
            WHERE ${table} MATCH ?${where}
            ORDER BY score DESC LIMIT ?`,
-        )
-        .all(match, ...params, limit) as Array<{ id: number; score: number }>;
+      ).all(match, ...params, limit) as Array<{ id: number; score: number }>;
       return rows.map((r) => ({ chunkId: r.id, score: r.score }));
     } catch (err) {
       // A malformed MATCH expression must not take the whole search down.
@@ -329,9 +339,9 @@ export class SqliteAdapter implements StorageAdapter {
 
   termExists(term: string): boolean {
     try {
-      const row = this.db
-        .prepare("SELECT rowid FROM chunks_fts_porter WHERE chunks_fts_porter MATCH ? LIMIT 1")
-        .get(`"${term.replace(/"/g, '""')}"`);
+      const row = this.prep(
+        "SELECT rowid FROM chunks_fts_porter WHERE chunks_fts_porter MATCH ? LIMIT 1",
+      ).get(`"${term.replace(/"/g, '""')}"`);
       return !!row;
     } catch {
       return false;
@@ -339,26 +349,26 @@ export class SqliteAdapter implements StorageAdapter {
   }
 
   vocabCandidates(prefix: string, limit: number): VocabTerm[] {
-    const rows = this.db
-      .prepare(
-        "SELECT term, doc df FROM chunks_vocab WHERE term >= ? AND term < ? ORDER BY doc DESC LIMIT ?",
-      )
-      .all(prefix, `${prefix}￿`, limit) as Array<{ term: string; df: number }>;
+    const rows = this.prep(
+      "SELECT term, doc df FROM chunks_vocab WHERE term >= ? AND term < ? ORDER BY doc DESC LIMIT ?",
+    ).all(prefix, `${prefix}￿`, limit) as Array<{ term: string; df: number }>;
     return rows;
   }
 
   topTerms(chunkIds: number[], limit: number): VocabTerm[] {
     if (!chunkIds.length) return [];
-    // fts5vocab 'instance' gives per-row terms; aggregate over the chosen chunks.
-    const rows = this.db
-      .prepare(
-        `SELECT term, COUNT(DISTINCT doc) df
-         FROM (SELECT term, doc FROM chunks_vocab_instance WHERE doc IN (${chunkIds.map(() => "?").join(",")}))
-         WHERE length(term) >= 3
-         GROUP BY term ORDER BY (term GLOB '[0-9]*') ASC, df DESC, term LIMIT ?`,
-      )
-      .all(...chunkIds, limit) as Array<{ term: string; df: number }>;
-    return rows;
+    // Tokenised in JS over just these chunks. The previous fts5vocab('instance') query
+    // could not push `doc IN (...)` down, so it walked every term instance in the index:
+    // ~400 ms per call on a 60k-chunk database, growing with every output indexed.
+    const bodies: string[] = [];
+    for (let i = 0; i < chunkIds.length; i += 500) {
+      const slice = chunkIds.slice(i, i + 500);
+      const rows = this.prep(
+        `SELECT body FROM chunks WHERE id IN (${slice.map(() => "?").join(",")})`,
+      ).all(...slice) as Array<{ body: string }>;
+      for (const r of rows) bodies.push(r.body);
+    }
+    return topTermsOf(bodies, limit);
   }
 
   // --- vectors -----------------------------------------------------------
@@ -537,17 +547,15 @@ export class SqliteAdapter implements StorageAdapter {
   }
 
   statRecord(sessionId: string, tool: string, d: StatDelta): void {
-    this.db
-      .prepare(
-        `INSERT INTO stats (session_id, tool, calls, raw_chars, returned_chars, duration_ms)
+    this.prep(
+      `INSERT INTO stats (session_id, tool, calls, raw_chars, returned_chars, duration_ms)
          VALUES (?, ?, 1, ?, ?, ?)
          ON CONFLICT(session_id, tool) DO UPDATE SET
            calls = calls + 1,
            raw_chars = raw_chars + excluded.raw_chars,
            returned_chars = returned_chars + excluded.returned_chars,
            duration_ms = duration_ms + excluded.duration_ms`,
-      )
-      .run(sessionId, tool, d.rawChars, d.returnedChars, d.durationMs);
+    ).run(sessionId, tool, d.rawChars, d.returnedChars, d.durationMs);
   }
 
   statsBySession(sessionId: string): StatRow[] {
@@ -1058,13 +1066,16 @@ export class SqliteAdapter implements StorageAdapter {
   }
 
   reindexQueueDrain(): string[] {
-    return this.transaction(() => {
-      const rows = this.db.prepare("SELECT path FROM reindex_queue").all() as Array<{
-        path: string;
-      }>;
-      this.db.exec("DELETE FROM reindex_queue");
-      return rows.map((r) => r.path);
+    // Runs before almost every tool call, and the queue is usually empty: peek with a
+    // plain read first so the common case never opens a write transaction.
+    const rows = this.prep("SELECT path FROM reindex_queue").all() as Array<{ path: string }>;
+    if (!rows.length) return [];
+    const paths = rows.map((r) => r.path);
+    this.transaction(() => {
+      const del = this.prep("DELETE FROM reindex_queue WHERE path = ?");
+      for (const p of paths) del.run(p);
     });
+    return paths;
   }
 
   // --- memories ----------------------------------------------------------

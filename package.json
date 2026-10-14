@@ -41,6 +41,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "node scripts/bench-hotpath.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "validate": "claude plugin validate .",

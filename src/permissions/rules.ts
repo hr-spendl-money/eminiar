@@ -26,7 +26,7 @@ function escapeRe(s: string): string {
  * Bash patterns: `cmd:*` and the legacy `cmd *` are prefix rules (the command must
  * start with `cmd` at a word boundary); other `*` are wildcards; no `*` is exact.
  */
-function bashRegex(pattern: string): RegExp {
+function compileBash(pattern: string): RegExp {
   if (pattern.endsWith(":*")) {
     return new RegExp(`^\\s*${escapeRe(pattern.slice(0, -2))}(\\s|$)`);
   }
@@ -37,6 +37,19 @@ function bashRegex(pattern: string): RegExp {
     return new RegExp(`^\\s*${escapeRe(pattern)}\\s*$`);
   }
   return new RegExp(`^\\s*${pattern.split("*").map(escapeRe).join(".*")}\\s*$`);
+}
+
+// Rule sets are small and stable; compiling each pattern once instead of per
+// (rule × command segment) keeps the permission check off the sandbox hot path.
+const bashRegexCache = new Map<string, RegExp>();
+function bashRegex(pattern: string): RegExp {
+  let re = bashRegexCache.get(pattern);
+  if (!re) {
+    if (bashRegexCache.size >= 1024) bashRegexCache.clear();
+    re = compileBash(pattern);
+    bashRegexCache.set(pattern, re);
+  }
+  return re;
 }
 
 export function matchBash(rule: Rule, command: string): boolean {

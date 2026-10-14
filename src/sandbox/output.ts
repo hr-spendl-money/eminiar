@@ -5,6 +5,7 @@ import { formatResults } from "../search/format.js";
 import { type SearchResponse, search } from "../search/pipeline.js";
 import { getCurrentSession } from "../session/current.js";
 import type { StorageAdapter } from "../storage/adapter.js";
+import { topTermsOf } from "../storage/terms.js";
 import type { Source } from "../storage/types.js";
 
 export interface ProcessInput {
@@ -74,8 +75,9 @@ export async function processOutput(
       );
     }
     lines.push(formatResults(responses, input.maxTokens ?? 1500));
-    const chunkIds = db.chunksOfDocument(r.documentId).map((c) => c.id);
-    const terms = db.topTerms(chunkIds, 40).map((t) => t.term);
+    // Vocabulary from this document's chunks only; see topTermsOf for why not fts5vocab.
+    const bodies = db.chunksOfDocument(r.documentId).map((c) => c.body);
+    const terms = topTermsOf(bodies, 40).map((t) => t.term);
     if (terms.length) lines.push(`\nsearchable terms: ${terms.join(", ")}`);
   } else {
     lines.push(out.slice(0, HEAD));

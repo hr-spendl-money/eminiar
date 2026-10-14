@@ -8,6 +8,8 @@ import type { StatDelta, StatRow } from "../storage/types.js";
  */
 export class GlobalDb {
   readonly db: Database.Database;
+  private readonly insStat: Database.Statement<unknown[], unknown>;
+  private readonly insDaily: Database.Statement<unknown[], unknown>;
 
   constructor(path = ensureDirs().globalDb) {
     this.db = new Database(path, { timeout: 2000 });
@@ -29,26 +31,25 @@ export class GlobalDb {
         fetched_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
     `);
+    // Every tool call records a stat; prepare the two statements once.
+    this.insStat = this.db.prepare(
+      `INSERT INTO stats (session_id, tool, calls, raw_chars, returned_chars, duration_ms)
+       VALUES ('lifetime', ?, 1, ?, ?, ?)
+       ON CONFLICT(session_id, tool) DO UPDATE SET calls = calls + 1,
+         raw_chars = raw_chars + excluded.raw_chars,
+         returned_chars = returned_chars + excluded.returned_chars,
+         duration_ms = duration_ms + excluded.duration_ms`,
+    );
+    this.insDaily = this.db.prepare(
+      `INSERT INTO daily (day, tool, calls, saved_chars) VALUES (?, ?, 1, ?)
+       ON CONFLICT(day, tool) DO UPDATE SET calls = calls + 1, saved_chars = saved_chars + excluded.saved_chars`,
+    );
   }
 
   record(tool: string, d: StatDelta): void {
-    this.db
-      .prepare(
-        `INSERT INTO stats (session_id, tool, calls, raw_chars, returned_chars, duration_ms)
-         VALUES ('lifetime', ?, 1, ?, ?, ?)
-         ON CONFLICT(session_id, tool) DO UPDATE SET calls = calls + 1,
-           raw_chars = raw_chars + excluded.raw_chars,
-           returned_chars = returned_chars + excluded.returned_chars,
-           duration_ms = duration_ms + excluded.duration_ms`,
-      )
-      .run(tool, d.rawChars, d.returnedChars, d.durationMs);
+    this.insStat.run(tool, d.rawChars, d.returnedChars, d.durationMs);
     const day = new Date().toISOString().slice(0, 10);
-    this.db
-      .prepare(
-        `INSERT INTO daily (day, tool, calls, saved_chars) VALUES (?, ?, 1, ?)
-         ON CONFLICT(day, tool) DO UPDATE SET calls = calls + 1, saved_chars = saved_chars + excluded.saved_chars`,
-      )
-      .run(day, tool, Math.max(0, d.rawChars - d.returnedChars));
+    this.insDaily.run(day, tool, Math.max(0, d.rawChars - d.returnedChars));
   }
 
   lifetime(): StatRow[] {

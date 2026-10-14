@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectContext } from "../context.js";
 import { projectDir } from "../paths.js";
@@ -16,12 +16,20 @@ export function setCurrentSession(ctx: ProjectContext, sessionId: string): void 
   writeFileSync(file(ctx), sessionId);
 }
 
+let cached: { file: string; mtimeMs: number; id: string } | undefined;
+
 export function getCurrentSession(ctx: ProjectContext): string {
   if (process.env.EMINIAR_SESSION_ID) return process.env.EMINIAR_SESSION_ID;
   const f = file(ctx);
-  if (existsSync(f)) {
-    const id = readFileSync(f, "utf8").trim();
-    if (id) return id;
+  // Read on every tool call; one stat() revalidates instead of exists + read.
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(f).mtimeMs;
+  } catch {
+    return "unknown";
   }
-  return "unknown";
+  if (cached && cached.file === f && cached.mtimeMs === mtimeMs) return cached.id;
+  const id = readFileSync(f, "utf8").trim() || "unknown";
+  cached = { file: f, mtimeMs, id };
+  return id;
 }
