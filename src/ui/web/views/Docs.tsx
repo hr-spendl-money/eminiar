@@ -489,7 +489,11 @@ function Discover({
     const def = new Set<string>();
     for (const c of d.local) if (!c.registered) def.add(`local:${c.name}`);
     for (const p of d.providers)
-      if (!p.registered && (p.confidence === "catalog" || p.confidence === "probe"))
+      if (
+        !p.registered &&
+        (p.confidence === "probe" ||
+          (p.confidence === "catalog" && p.tier !== "library" && p.tier !== "infra"))
+      )
         def.add(`prov:${p.name}`);
     setPicked(def);
   }, [d]);

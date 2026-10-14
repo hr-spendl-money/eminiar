@@ -138,12 +138,17 @@ workspaces and monorepos) without fetching anything:
   (`docs.`, `developer.`, `/docs`, `/openapi.json`, …). A spec URL referenced in code is used
   directly.
 
-`em_docs {action: "add", pick: "recommended"}` registers the local docs, catalogue providers and
-discovered APIs in `.eminiar/docs.json` and indexes them; `{action: "add", url | path | provider}`
-adds one source. URL sources are crawled same-origin under the seed's path (default depth 1, 25
-pages, 7-day cache); OpenAPI documents and Postman collections — local or fetched — are rendered
-one markdown section per operation (parameters, request body, responses, schemas) so a lookup
-returns the exact endpoint. Pages land in the index under `docs:<name>`; `em_docs {action:
+`em_docs {action: "add", pick: "recommended"}` registers the local docs, the **third-party
+services** the project integrates and the APIs found in code in `.eminiar/docs.json` and indexes
+them. It is deliberately small: catalogue entries carry a tier, and frameworks (`library`) and
+platform (`infra`) stay out unless you ask (`pick: "infra" | "catalog" | "registry" | "all"`, or
+`names`), because Claude already knows them and their reference sites are large.
+`{action: "add", url | path | provider}` adds one source. URL sources are crawled same-origin
+under the seed's path (default depth 1, **8 pages** per source, pages cut at 120 KB, 7-day
+cache); OpenAPI documents and Postman collections — local or fetched — are rendered one markdown
+section per operation (parameters, request body, responses, schemas) so a lookup returns the exact
+endpoint. Documentation is **lexical-only by default** (`docs.embed: true` turns on vectors), so a
+crawl never queues model work. Pages land in the index under `docs:<name>`; `em_docs {action:
 "lookup", query}` searches them all (`em_search {source: "docs:*"}` does the same), `sync`
 refreshes, `remove` drops a source and its pages.
 
@@ -160,8 +165,8 @@ See `eminiar.config.schema.json` for every key: `routing`, `sandbox` (timeouts, 
 allowlist, disabled languages), `search`, `embeddings`, `graph.include/exclude` (TS/JS, Python and
 Go by default; `node_modules`, `dist`, `vendor`, virtualenvs excluded), `git.maxCommits`,
 `index.docs`, `permissions.extraDeny`, `memories.dir` (default `.eminiar/memories`), `docs`
-(`manifest`, `ttlHours`, `crawl.depth/maxPages`, `discover.includeDev/subprojects`, extra `catalog`
-entries).
+(`manifest`, `ttlHours`, `crawl.depth/maxPages/maxPageBytes`, `embed`,
+`discover.includeDev/subprojects`, extra `catalog` entries with a `tier`).
 
 Hooks add graph context without blocking anything: a session starts with a project brief
 (overview, accepted decisions, hot files, index freshness), subagents get the same brief, a Grep

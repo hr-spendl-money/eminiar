@@ -228,12 +228,22 @@
               "maximum": 3
             },
             "maxPages": {
-              "default": 25,
+              "default": 8,
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 200
+            },
+            "maxPageBytes": {
+              "default": 122880,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             }
           }
+        },
+        "embed": {
+          "default": false,
+          "type": "boolean"
         },
         "discover": {
           "default": {},
@@ -303,11 +313,25 @@
                   "type": "string"
                 }
               },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "tags": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "service",
+                  "infra",
+                  "library"
+                ]
               },
               "crawl": {
                 "type": "object",

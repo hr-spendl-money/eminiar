@@ -18,6 +18,8 @@ export interface SyncResult {
   skipped: number;
   /** OpenAPI documents / Postman collections rendered per operation. */
   specs: number;
+  /** Pages cut at docs.crawl.maxPageBytes. */
+  truncated: number;
   errors: string[];
   ms: number;
 }
@@ -66,6 +68,24 @@ export function extractLinks(markdown: string, base: string): string[] {
     if (u) out.add(u);
   }
   return [...out];
+}
+
+/** Keep the first `max` bytes of a page; a reference page can run to megabytes. */
+function capBytes(markdown: string, max: number, r: SyncResult): string {
+  if (markdown.length <= max) return markdown;
+  r.truncated++;
+  return `${markdown.slice(0, max)}\n\n… (page truncated at ${Math.round(max / 1024)} KB; raise docs.crawl.maxPageBytes to keep more)`;
+}
+
+/** Documentation is lexical-only unless `docs.embed` is on: mark its chunks so no model work is queued. */
+function skipEmbedding(db: StorageAdapter, tag: string): void {
+  for (const doc of db.documentsBySource(tag, 100_000)) {
+    const ids = db
+      .chunksOfDocument(doc.id)
+      .filter((c) => !c.embedded)
+      .map((c) => c.id);
+    if (ids.length) db.markEmbedded(ids);
+  }
 }
 
 function inScope(url: string, scopes: Array<{ origin: string; prefix: string }>): boolean {
@@ -135,7 +155,7 @@ async function syncUrlSource(
             ? `${f.title} (${next.url})`
             : next.url,
         uri: next.url,
-        content: spec?.markdown ?? f.markdown,
+        content: capBytes(spec?.markdown ?? f.markdown, ctx.config.docs.crawl.maxPageBytes, r),
         kind: "markdown",
         meta: {
           docs: src.name,
@@ -180,11 +200,13 @@ function syncPathSource(
     globs: src.glob ?? ctx.config.index.docs,
     recursive: true,
     transform: (content, rel) => {
-      if (!looksLikeSpec(rel, content)) return undefined;
+      const max = ctx.config.docs.crawl.maxPageBytes;
+      if (!looksLikeSpec(rel, content))
+        return content.length > max ? { content: capBytes(content, max, r) } : undefined;
       const spec = specToMarkdown(content);
-      if (!spec) return undefined;
+      if (!spec) return content.length > max ? { content: capBytes(content, max, r) } : undefined;
       r.specs++;
-      return { content: spec.markdown, title: spec.title, kind: "markdown" };
+      return { content: capBytes(spec.markdown, max, r), title: spec.title, kind: "markdown" };
     },
   });
   r.pages = s.files;
@@ -213,6 +235,7 @@ export async function syncSource(
     chunks: 0,
     skipped: 0,
     specs: 0,
+    truncated: 0,
     errors: [],
     ms: 0,
   };
@@ -222,6 +245,7 @@ export async function syncSource(
   } catch (err) {
     r.errors.push((err as Error).message);
   }
+  if (!ctx.config.docs.embed) skipEmbedding(db, docsTag(src.name));
   r.ms = Date.now() - started;
   setSyncState(db, src.name, {
     at: Date.now(),
@@ -232,7 +256,7 @@ export async function syncSource(
     skipped: r.skipped,
     ms: r.ms,
   });
-  kickEmbedding(ctx, db);
+  if (ctx.config.docs.embed) kickEmbedding(ctx, db);
   return r;
 }
 
@@ -258,6 +282,7 @@ export async function syncSources(
         chunks: 0,
         skipped: 0,
         specs: 0,
+        truncated: 0,
         errors: ["not registered"],
         ms: 0,
       });
@@ -276,6 +301,7 @@ export function formatSync(results: SyncResult[]): string {
         ...(r.cached ? [`${r.cached} from cache`] : []),
         `${r.chunks} chunks`,
         ...(r.specs ? [`${r.specs} API spec(s) rendered per operation`] : []),
+        ...(r.truncated ? [`${r.truncated} page(s) truncated`] : []),
         ...(r.skipped ? [`${r.skipped} skipped`] : []),
         `${r.ms} ms`,
       ];

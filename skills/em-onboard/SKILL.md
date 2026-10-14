@@ -21,11 +21,12 @@ Gather the facts with the sandbox, not by reading whole files into context:
    Postman specs, agent instructions and env references, plus the npm / PyPI / Go packages,
    env var prefixes, container images, infrastructure files and third-party API hosts the code
    calls, each mapped to its documentation. Then `em_docs {action: "add", pick: "recommended"}`
-   registers and indexes the local docs, the catalogue providers and the APIs found in code
-   (unknown API hosts are probed for a docs site; a referenced spec URL is used directly).
-   Add anything the project clearly depends on that came back `unknown` with
-   `{action: "add", name, url}` when you know the URL; skip registry packages unless the
-   project is small. Do not paste the candidate list into the reply.
+   registers and indexes the local docs, the third-party services and the APIs found in code
+   (unknown API hosts are probed for a docs site; a referenced spec URL is used directly). Keep
+   it small: frameworks, infrastructure and registry packages stay out unless the user asks
+   (`pick: "infra" | "catalog" | "registry"`). Add anything the project clearly depends on that
+   came back `unknown` with `{action: "add", name, url}` when you know the URL. Do not paste the
+   candidate list into the reply.
 
 Then write, via `em_remember {kind: "onboarding", name: …, content: …}`:
 

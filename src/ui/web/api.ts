@@ -328,6 +328,7 @@ export interface ProviderCandidateUi {
   urls: string[];
   crawl?: { depth?: number; maxPages?: number };
   confidence: "catalog" | "registry" | "probe" | "unknown";
+  tier?: "service" | "infra" | "library";
   usedBy: string[];
   evidence: string[];
   registered: boolean;

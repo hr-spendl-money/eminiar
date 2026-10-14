@@ -2,7 +2,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import fg from "fast-glob";
 import type { ProjectContext } from "../context.js";
-import { type CatalogEntry, type CatalogKind, catalogLookup, mergedCatalog } from "./catalog.js";
+import {
+  type CatalogEntry,
+  type CatalogKind,
+  catalogLookup,
+  mergedCatalog,
+  type Tier,
+} from "./catalog.js";
 import { readManifest, slugify } from "./manifest.js";
 
 export interface LocalCandidate {
@@ -34,6 +40,8 @@ export interface ProviderCandidate {
    * host whose documentation site is guessed and verified at add time; unknown = needs a URL.
    */
   confidence: Confidence;
+  /** For catalogue providers: service | infra | library (see CatalogEntry.tier). Non-catalogue API and doc-link candidates count as service. */
+  tier?: Tier | undefined;
   usedBy: string[];
   evidence: string[];
   tags?: string[] | undefined;
@@ -978,6 +986,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
       urls: c.urls,
       crawl: c.crawl,
       confidence: c.confidence,
+      tier: c.tier,
       tags: c.tags,
       usedBy: [c.usedBy],
       evidence: [c.evidence],
@@ -997,6 +1006,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
         urls: entry.urls,
         crawl: entry.crawl,
         confidence: "catalog",
+        tier: entry.tier ?? "library",
         tags: entry.tags,
         usedBy: project,
         evidence,
@@ -1062,6 +1072,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
           urls: [...entry.urls, ...specUrls],
           crawl: entry.crawl,
           confidence: "catalog",
+          tier: entry.tier ?? "library",
           tags: entry.tags,
           usedBy: h.project || ".",
           evidence,
@@ -1101,6 +1112,7 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
           urls: entry.urls,
           crawl: entry.crawl,
           confidence: "catalog",
+          tier: entry.tier ?? "library",
           tags: entry.tags,
           usedBy: l.project || ".",
           evidence,
@@ -1129,6 +1141,10 @@ export function discoverDocs(ctx: ProjectContext, opts: DiscoverOptions = {}): D
       });
     }
   }
+
+  for (const c of byName.values())
+    c.tier ??=
+      c.provider.startsWith("api:") || c.provider.startsWith("link:") ? "service" : "library";
 
   const order: Record<Confidence, number> = { catalog: 0, registry: 1, probe: 2, unknown: 3 };
   const providers = [...byName.values()].sort(

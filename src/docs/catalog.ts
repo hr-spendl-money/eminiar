@@ -25,12 +25,20 @@ export interface CatalogEntry {
   hosts?: string[] | undefined;
   crawl?: { depth?: number | undefined; maxPages?: number | undefined } | undefined;
   tags?: string[] | undefined;
+  /**
+   * service = a third-party product/API the project integrates (indexed by `recommended`);
+   * infra = platform the project runs on; library = a framework or package (opt-in: Claude
+   * usually knows these, and their reference sites are large).
+   */
+  tier?: Tier | undefined;
 }
+
+export type Tier = "service" | "infra" | "library";
 
 /** `api` keys are hostnames found in outbound HTTP calls. */
 export type CatalogKind = "npm" | "pypi" | "go" | "env" | "image" | "files" | "api";
 
-const shallow = { depth: 1, maxPages: 20 };
+const shallow = { depth: 1, maxPages: 6 };
 
 export const CATALOG: CatalogEntry[] = [
   // --- JavaScript / TypeScript runtime and frameworks ---------------------------------
@@ -162,17 +170,18 @@ export const CATALOG: CatalogEntry[] = [
     title: "Moleculer",
     urls: ["https://moleculer.services/docs/0.14/"],
     npm: ["moleculer", "moleculer-web", "moleculer-db", "moleculer-repl", "@moleculer/*"],
-    crawl: { depth: 1, maxPages: 40 },
+    crawl: { depth: 1, maxPages: 12 },
   },
   {
     id: "nats",
+    tier: "infra",
     title: "NATS",
     urls: ["https://docs.nats.io/"],
     npm: ["nats", "nats.ws", "@nats-io/*"],
     env: ["NATS"],
     image: ["nats", "nats-streaming"],
     go: ["github.com/nats-io/"],
-    crawl: { depth: 1, maxPages: 40 },
+    crawl: { depth: 1, maxPages: 12 },
   },
   {
     id: "mongoose",
@@ -183,6 +192,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "mongodb",
+    tier: "infra",
     title: "MongoDB",
     urls: [
       "https://www.mongodb.com/docs/drivers/node/current/",
@@ -197,6 +207,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "postgres",
+    tier: "infra",
     title: "PostgreSQL",
     urls: ["https://www.postgresql.org/docs/current/index.html", "https://node-postgres.com/"],
     npm: ["pg", "postgres"],
@@ -207,6 +218,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "mysql",
+    tier: "infra",
     title: "MySQL",
     urls: ["https://dev.mysql.com/doc/refman/8.4/en/"],
     npm: ["mysql2", "mysql"],
@@ -216,6 +228,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "redis",
+    tier: "infra",
     title: "Redis",
     urls: ["https://redis.io/docs/latest/develop/", "https://redis.io/docs/latest/commands/"],
     npm: ["redis", "ioredis"],
@@ -262,6 +275,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "kafka",
+    tier: "infra",
     title: "Apache Kafka",
     urls: ["https://kafka.js.org/docs/getting-started", "https://kafka.apache.org/documentation/"],
     npm: ["kafkajs"],
@@ -271,6 +285,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "rabbitmq",
+    tier: "infra",
     title: "RabbitMQ",
     urls: ["https://www.rabbitmq.com/docs"],
     npm: ["amqplib"],
@@ -280,6 +295,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "elasticsearch",
+    tier: "infra",
     title: "Elasticsearch",
     urls: ["https://www.elastic.co/docs/reference/elasticsearch"],
     npm: ["@elastic/elasticsearch"],
@@ -292,7 +308,7 @@ export const CATALOG: CatalogEntry[] = [
     title: "Zod",
     urls: ["https://zod.dev/"],
     npm: ["zod"],
-    crawl: { depth: 1, maxPages: 15 },
+    crawl: { depth: 1, maxPages: 8 },
   },
   { id: "joi", title: "Joi", urls: ["https://joi.dev/api/"], npm: ["joi"], crawl: { depth: 0 } },
   {
@@ -496,6 +512,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "k6",
+    tier: "infra",
     title: "Grafana k6",
     urls: ["https://grafana.com/docs/k6/latest/"],
     npm: ["k6"],
@@ -537,6 +554,7 @@ export const CATALOG: CatalogEntry[] = [
   // --- cloud and SaaS providers -----------------------------------------------------------
   {
     id: "aws",
+    tier: "service",
     title: "AWS",
     urls: [
       "https://docs.aws.amazon.com/",
@@ -551,6 +569,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "aws-cognito",
+    tier: "service",
     title: "Amazon Cognito",
     urls: ["https://docs.aws.amazon.com/cognito/latest/developerguide/what-is-amazon-cognito.html"],
     npm: ["amazon-cognito-identity-js", "@aws-sdk/client-cognito-identity-provider"],
@@ -560,6 +579,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "google-cloud",
+    tier: "service",
     title: "Google Cloud",
     urls: ["https://cloud.google.com/docs"],
     npm: ["@google-cloud/*"],
@@ -570,6 +590,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "gemini",
+    tier: "service",
     title: "Gemini API",
     urls: ["https://ai.google.dev/gemini-api/docs"],
     npm: ["@google/generative-ai", "@google/genai"],
@@ -580,6 +601,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "anthropic",
+    tier: "service",
     title: "Claude API",
     urls: ["https://docs.anthropic.com/en/api/overview"],
     npm: ["@anthropic-ai/sdk"],
@@ -590,6 +612,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "openai",
+    tier: "service",
     title: "OpenAI API",
     urls: ["https://platform.openai.com/docs/api-reference"],
     npm: ["openai"],
@@ -600,6 +623,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "datadog",
+    tier: "service",
     title: "Datadog",
     urls: [
       "https://docs.datadoghq.com/tracing/trace_collection/automatic_instrumentation/dd_libraries/nodejs/",
@@ -614,6 +638,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "sentry",
+    tier: "service",
     title: "Sentry",
     urls: ["https://docs.sentry.io/platforms/javascript/guides/node/"],
     npm: ["@sentry/*"],
@@ -624,6 +649,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "stripe",
+    tier: "service",
     title: "Stripe",
     urls: ["https://docs.stripe.com/api"],
     npm: ["stripe"],
@@ -634,6 +660,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "twilio-sendgrid",
+    tier: "service",
     title: "SendGrid",
     urls: ["https://www.twilio.com/docs/sendgrid/api-reference"],
     npm: ["@sendgrid/*"],
@@ -644,6 +671,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "twilio",
+    tier: "service",
     title: "Twilio",
     urls: ["https://www.twilio.com/docs/usage/api"],
     npm: ["twilio"],
@@ -654,6 +682,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "slack",
+    tier: "service",
     title: "Slack API",
     urls: ["https://api.slack.com/docs", "https://api.slack.com/messaging/webhooks"],
     npm: ["@slack/*"],
@@ -664,6 +693,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "telegram",
+    tier: "service",
     title: "Telegram Bot API",
     urls: ["https://core.telegram.org/bots/api"],
     npm: ["telegraf", "node-telegram-bot-api", "grammy"],
@@ -673,6 +703,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "whatsapp",
+    tier: "service",
     title: "WhatsApp Cloud API",
     urls: ["https://developers.facebook.com/docs/whatsapp/cloud-api"],
     env: ["WA", "WHATSAPP", "META_WA"],
@@ -681,6 +712,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "github",
+    tier: "service",
     title: "GitHub REST API & Actions",
     urls: ["https://docs.github.com/en/rest", "https://docs.github.com/en/actions"],
     npm: ["@octokit/*", "octokit"],
@@ -691,6 +723,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "cloudflare",
+    tier: "service",
     title: "Cloudflare",
     urls: ["https://developers.cloudflare.com/"],
     npm: ["wrangler", "cloudflare"],
@@ -700,6 +733,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "infisical",
+    tier: "service",
     title: "Infisical",
     urls: [
       "https://infisical.com/docs/documentation/getting-started/introduction",
@@ -712,6 +746,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "vault",
+    tier: "service",
     title: "HashiCorp Vault",
     urls: ["https://developer.hashicorp.com/vault/docs"],
     npm: ["node-vault"],
@@ -721,6 +756,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "sumsub",
+    tier: "service",
     title: "Sumsub",
     urls: [
       "https://docs.sumsub.com/reference/about-sumsub-api",
@@ -732,6 +768,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "firebase",
+    tier: "service",
     title: "Firebase",
     urls: ["https://firebase.google.com/docs"],
     npm: ["firebase", "firebase-admin"],
@@ -741,6 +778,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "supabase",
+    tier: "service",
     title: "Supabase",
     urls: ["https://supabase.com/docs"],
     npm: ["@supabase/*"],
@@ -750,6 +788,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "auth0",
+    tier: "service",
     title: "Auth0",
     urls: ["https://auth0.com/docs"],
     npm: ["auth0", "@auth0/*"],
@@ -759,6 +798,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "keycloak",
+    tier: "service",
     title: "Keycloak",
     urls: ["https://www.keycloak.org/documentation"],
     npm: ["keycloak-js", "keycloak-connect"],
@@ -768,6 +808,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "minio",
+    tier: "service",
     title: "MinIO / S3",
     urls: ["https://min.io/docs/minio/linux/developers/javascript/API.html"],
     npm: ["minio"],
@@ -777,6 +818,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "localstack",
+    tier: "service",
     title: "LocalStack",
     urls: ["https://docs.localstack.cloud/overview/"],
     image: ["localstack/localstack"],
@@ -787,6 +829,7 @@ export const CATALOG: CatalogEntry[] = [
   // --- infrastructure --------------------------------------------------------------------
   {
     id: "docker",
+    tier: "infra",
     title: "Docker",
     urls: [
       "https://docs.docker.com/reference/dockerfile/",
@@ -798,6 +841,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "kubernetes",
+    tier: "infra",
     title: "Kubernetes",
     urls: ["https://kubernetes.io/docs/concepts/", "https://kubernetes.io/docs/reference/kubectl/"],
     files: ["kubernetes"],
@@ -808,6 +852,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "helm",
+    tier: "infra",
     title: "Helm",
     urls: ["https://helm.sh/docs/"],
     files: ["helm"],
@@ -815,6 +860,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "istio",
+    tier: "infra",
     title: "Istio",
     urls: [
       "https://istio.io/latest/docs/reference/config/networking/",
@@ -825,6 +871,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "karpenter",
+    tier: "infra",
     title: "Karpenter",
     urls: ["https://karpenter.sh/docs/"],
     files: ["karpenter"],
@@ -832,6 +879,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "terraform",
+    tier: "infra",
     title: "Terraform",
     urls: [
       "https://developer.hashicorp.com/terraform/language",
@@ -843,6 +891,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "nginx",
+    tier: "infra",
     title: "NGINX",
     urls: ["https://nginx.org/en/docs/"],
     image: ["nginx", "nginxinc/nginx-unprivileged"],
@@ -850,6 +899,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "traefik",
+    tier: "infra",
     title: "Traefik",
     urls: ["https://doc.traefik.io/traefik/"],
     image: ["traefik"],
@@ -857,6 +907,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "prometheus-grafana",
+    tier: "infra",
     title: "Prometheus & Grafana",
     urls: [
       "https://prometheus.io/docs/introduction/overview/",
@@ -869,6 +920,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   {
     id: "jaeger",
+    tier: "infra",
     title: "Jaeger / OpenTelemetry",
     urls: [
       "https://www.jaegertracing.io/docs/latest/",

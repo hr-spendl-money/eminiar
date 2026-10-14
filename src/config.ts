@@ -121,9 +121,21 @@ export const ConfigSchema = z.object({
         .object({
           /** Link depth followed from each seed URL (same origin, under the seed's path). */
           depth: z.number().int().min(0).max(3).default(1),
-          maxPages: z.number().int().positive().max(200).default(25),
+          /** Pages per source per sync; catalogue entries and `add {max_pages}` can raise it. */
+          maxPages: z.number().int().positive().max(200).default(8),
+          /** A page larger than this is truncated before indexing (reference pages can be megabytes). */
+          maxPageBytes: z
+            .number()
+            .int()
+            .positive()
+            .default(120 * 1024),
         })
         .prefault({}),
+      /**
+       * Embed documentation chunks for semantic search. Off by default: lexical search covers
+       * documentation well and a crawl should never queue hours of model work.
+       */
+      embed: z.boolean().default(false),
       discover: z
         .object({
           /** Also propose documentation for devDependencies. */
@@ -145,7 +157,9 @@ export const ConfigSchema = z.object({
             env: z.array(z.string()).optional(),
             image: z.array(z.string()).optional(),
             files: z.array(z.string()).optional(),
+            hosts: z.array(z.string()).optional(),
             tags: z.array(z.string()).optional(),
+            tier: z.enum(["service", "infra", "library"]).optional(),
             crawl: z
               .object({
                 depth: z.number().int().min(0).max(3).optional(),

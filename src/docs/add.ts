@@ -18,7 +18,31 @@ import {
 import { type Resolved, resolveProvider } from "./resolve.js";
 import { formatSync, type SyncResult, syncSources } from "./sync.js";
 
-export type Pick = "recommended" | "local" | "catalog" | "api" | "registry" | "all";
+/**
+ * recommended = local docs + third-party services + APIs found in code (small, project-specific);
+ * service / infra / catalog = catalogue tiers; api = probed hosts; registry = unknown packages;
+ * all = everything.
+ */
+export type Pick =
+  | "recommended"
+  | "local"
+  | "service"
+  | "infra"
+  | "catalog"
+  | "api"
+  | "registry"
+  | "all";
+
+export const PICKS: Pick[] = [
+  "recommended",
+  "local",
+  "service",
+  "infra",
+  "catalog",
+  "api",
+  "registry",
+  "all",
+];
 
 /** A loosely specified source as the tool, CLI and dashboard receive it. */
 export interface AddInput {
@@ -89,19 +113,27 @@ function candidateToInput(c: LocalCandidate | ProviderCandidate): AddInput {
 /** Which discovery candidates a `pick` selects; `names` narrows further. */
 export function pickCandidates(d: Discovery, pick: Pick, names?: string[] | undefined): AddInput[] {
   const wantLocal = pick === "local" || pick === "recommended" || pick === "all";
-  const conf = new Set<string>(
-    pick === "catalog"
-      ? ["catalog"]
-      : pick === "api"
-        ? ["probe"]
-        : pick === "registry"
-          ? ["registry"]
-          : pick === "recommended"
-            ? ["catalog", "probe"]
-            : pick === "all"
-              ? ["catalog", "probe", "registry"]
-              : [],
-  );
+  const wants = (p: ProviderCandidate): boolean => {
+    const tier = p.tier ?? "library";
+    switch (pick) {
+      case "recommended":
+        return p.confidence === "probe" || (p.confidence === "catalog" && tier === "service");
+      case "service":
+        return p.confidence === "catalog" && tier === "service";
+      case "infra":
+        return p.confidence === "catalog" && tier === "infra";
+      case "catalog":
+        return p.confidence === "catalog";
+      case "api":
+        return p.confidence === "probe";
+      case "registry":
+        return p.confidence === "registry";
+      case "all":
+        return p.confidence !== "unknown";
+      default:
+        return false;
+    }
+  };
   const out: AddInput[] = [];
   const seen = new Set<string>();
   const take = (c: LocalCandidate | ProviderCandidate) => {
@@ -111,7 +143,7 @@ export function pickCandidates(d: Discovery, pick: Pick, names?: string[] | unde
     out.push(candidateToInput(c));
   };
   if (wantLocal) for (const c of d.local) take(c);
-  for (const c of d.providers) if (conf.has(c.confidence)) take(c);
+  for (const c of d.providers) if (wants(c)) take(c);
   return out;
 }
 

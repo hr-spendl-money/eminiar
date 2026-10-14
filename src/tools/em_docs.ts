@@ -4,6 +4,8 @@ import {
   addDocSources,
   addPicked,
   formatAdd,
+  PICKS,
+  type Pick,
   removeDocSource,
 } from "../docs/add.js";
 import { type Discovery, discoverDocs } from "../docs/discover.js";
@@ -83,18 +85,47 @@ export function formatDiscovery(d: Discovery, max = 40): string {
       `- ${c.name} · ${c.path}${c.glob && c.glob.length <= 4 ? ` [${c.glob.join(", ")}]` : ""} · ${c.files} file(s) · ${kb(c.bytes)} — ${c.why}${reg(c.registered)}`,
     );
   if (local.length > max) lines.push(`  … ${local.length - max} more`);
-  const groups: Array<[string, string, string]> = [
-    ["catalog", "Libraries, services and infrastructure with known documentation", "URLs known"],
-    ["probe", "Third-party APIs called from code", "documentation site is probed at add"],
+  type P = Discovery["providers"][number];
+  const groups: Array<[string, string, string, (p: P) => boolean]> = [
+    [
+      "catalog",
+      "Third-party services and APIs with known documentation",
+      "URLs known; in `recommended`",
+      (p) => p.confidence === "catalog" && (p.tier ?? "library") === "service",
+    ],
+    [
+      "probe",
+      "Third-party APIs called from code",
+      "documentation site is probed at add; in `recommended`",
+      (p) => p.confidence === "probe",
+    ],
+    [
+      "catalog",
+      "Infrastructure the project runs on",
+      'URLs known; pick "infra"',
+      (p) => p.confidence === "catalog" && p.tier === "infra",
+    ],
+    [
+      "catalog",
+      "Frameworks and libraries",
+      'URLs known; pick "catalog" — Claude usually knows these and their sites are large',
+      (p) => p.confidence === "catalog" && (p.tier ?? "library") === "library",
+    ],
     [
       "registry",
       "Packages without a catalogue entry",
-      "resolved through npm / PyPI / pkg.go.dev at add",
+      'resolved through npm / PyPI / pkg.go.dev with pick "registry"',
+      (p) => p.confidence === "registry",
     ],
-    ["unknown", "Env var prefixes and images nobody knows", "pass url to add"],
+    [
+      "unknown",
+      "Env var prefixes and images nobody knows",
+      "pass url to add",
+      (p) => p.confidence === "unknown",
+    ],
   ];
-  for (const [conf, title, note] of groups) {
-    const list = d.providers.filter((p) => p.confidence === conf);
+  for (const [conf, title, note, wants] of groups) {
+    const list = d.providers.filter(wants);
     if (!list.length) continue;
     lines.push("", `${title} (${list.length}; ${note}):`);
     for (const p of list.slice(0, max)) {
@@ -110,13 +141,21 @@ export function formatDiscovery(d: Discovery, max = 40): string {
     }
     if (list.length > max) lines.push(`  … ${list.length - max} more`);
   }
-  const unreg =
+  const rec =
     d.local.filter((c) => !c.registered).length +
-    d.providers.filter((p) => !p.registered && p.confidence !== "unknown").length;
+    d.providers.filter(
+      (p) =>
+        !p.registered &&
+        (p.confidence === "probe" ||
+          (p.confidence === "catalog" && (p.tier ?? "library") === "service")),
+    ).length;
+  const rest = d.providers.filter(
+    (p) => !p.registered && p.confidence !== "unknown" && p.confidence !== "probe",
+  ).length;
   lines.push(
     "",
-    unreg
-      ? `Next: em_docs {action:"add", pick:"recommended"} registers and indexes the local docs, catalogue providers and probed APIs above (${unreg} unregistered candidates); pick "all" adds registry packages too; names:[…] narrows. Unknown ones: em_docs {action:"add", name, url}.`
+    rec || rest
+      ? `Next: em_docs {action:"add", pick:"recommended"} registers and indexes the local docs, third-party services and APIs above (${rec} candidates, a few pages each). Frameworks, infrastructure and registry packages stay out unless asked: pick "infra" | "catalog" | "registry" | "all", or names:[…]. Unknown ones: em_docs {action:"add", name, url}.`
       : 'Everything found is already registered. em_docs {action:"sync"} refreshes; em_docs {action:"lookup", query} answers from the index.',
   );
   return lines.join("\n");
@@ -135,10 +174,10 @@ export const emDocs = defineTool({
       .describe("sync/remove: which sources; add with pick: which candidates"),
     sources: z.array(z.object(sourceShape)).optional().describe("add: several sources at once"),
     pick: z
-      .enum(["recommended", "local", "catalog", "api", "registry", "all"])
+      .enum(PICKS as [Pick, ...Pick[]])
       .optional()
       .describe(
-        "add: take candidates from a fresh discovery — recommended = local docs + catalogue providers + APIs found in code",
+        "add: take candidates from a fresh discovery — recommended = local docs + third-party services + APIs found in code (small); infra | catalog | registry | all widen it",
       ),
     sync: z.boolean().optional().describe("add: index right away (default true)"),
     force: z.boolean().optional().describe("sync: refetch ignoring the cache and drop stale pages"),

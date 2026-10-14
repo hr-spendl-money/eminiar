@@ -320,7 +320,17 @@ describe("discovery", () => {
     const d = discoverDocs(ctx);
     const rec = pickCandidates(d, "recommended");
     const names = rec.map((r) => r.name);
-    expect(names).toEqual(expect.arrayContaining(["docs", "moleculer", "paygate-pay", "vendorx"]));
+    expect(names).toEqual(expect.arrayContaining(["docs", "sumsub", "paygate-pay", "vendorx"]));
+    // frameworks and infrastructure are opt-in: Claude knows them and their sites are large
+    expect(names).not.toContain("moleculer");
+    expect(names).not.toContain("nats");
+    expect(pickCandidates(d, "catalog").map((r) => r.name)).toEqual(
+      expect.arrayContaining(["moleculer", "nats", "sumsub"]),
+    );
+    expect(pickCandidates(d, "infra").map((r) => r.name)).toEqual(
+      expect.arrayContaining(["nats", "mongodb"]),
+    );
+    expect(pickCandidates(d, "infra").map((r) => r.name)).not.toContain("moleculer");
     expect(names).not.toContain("some-unknown-lib");
     expect(names).not.toContain("paygate");
     expect(pickCandidates(d, "registry").map((r) => r.name)).toEqual(["some-unknown-lib"]);
@@ -386,6 +396,9 @@ describe("manifest and sync", () => {
     expect(db.countDocuments(docsTag("docs"))).toBe(2);
     const again = await syncSource(ctx, db, src);
     expect(again.unchanged).toBe(2);
+    // docs are lexical-only by default: no embedding work is queued for them
+    for (const doc of db.documentsBySource(docsTag("docs")))
+      expect(db.chunksOfDocument(doc.id).every((c) => c.embedded > 0)).toBe(true);
     const out = textOf(
       await emDocs.handler({ action: "lookup", query: "ledger journals transfer" }, ctx),
     );
