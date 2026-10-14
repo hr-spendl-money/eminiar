@@ -7,6 +7,7 @@ import type {
   ChunkWithDoc,
   DocumentInput,
   DocumentRow,
+  DocumentSummaryRow,
   EventInput,
   EventRow,
   FileIndexInput,
@@ -27,6 +28,7 @@ import type {
   SearchFilters,
   SessionRow,
   SnapshotRow,
+  SourceStatRow,
   StatDelta,
   StatRow,
   VecHit,
@@ -52,6 +54,10 @@ function filterSql(f: SearchFilters | undefined): { where: string; params: unkno
     const sources = Array.isArray(f.source) ? f.source : [f.source];
     clauses.push(`d.source IN (${sources.map(() => "?").join(",")})`);
     params.push(...sources);
+  }
+  if (f.sourcePrefix) {
+    clauses.push("d.source LIKE ? ESCAPE '\\'");
+    params.push(`${f.sourcePrefix.replace(/[\\%_]/g, "\\$&")}%`);
   }
   if (f.contentType) {
     clauses.push("c.content_type = ?");
@@ -233,6 +239,26 @@ export class SqliteAdapter implements StorageAdapter {
         })
       : (this.db.prepare("SELECT COUNT(*) n FROM documents").get() as { n: number });
     return row.n;
+  }
+
+  documentsBySource(source: string, limit = 200): DocumentSummaryRow[] {
+    return this.db
+      .prepare(
+        `SELECT d.id, d.source, d.title, d.uri, d.created_at,
+                (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) chunks
+         FROM documents d WHERE d.source = ? ORDER BY d.created_at DESC, d.id DESC LIMIT ?`,
+      )
+      .all(source, limit) as DocumentSummaryRow[];
+  }
+
+  documentSourceStats(prefix: string): SourceStatRow[] {
+    return this.db
+      .prepare(
+        `SELECT d.source source, COUNT(DISTINCT d.id) documents, COUNT(c.id) chunks, MAX(d.created_at) latest
+         FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+         WHERE d.source LIKE ? ESCAPE '\\' GROUP BY d.source ORDER BY d.source`,
+      )
+      .all(`${prefix.replace(/[\\%_]/g, "\\$&")}%`) as SourceStatRow[];
   }
 
   private hydrate(rows: Row[]): ChunkWithDoc[] {

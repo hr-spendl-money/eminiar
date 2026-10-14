@@ -1,6 +1,19 @@
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { getContext, type ProjectContext } from "../context.js";
+import {
+  type AddInput,
+  addDocSources,
+  addPicked,
+  formatAdd,
+  type Pick,
+  removeDocSource,
+} from "../docs/add.js";
+import { type CatalogEntry, mergedCatalog } from "../docs/catalog.js";
+import { type DiscoverOptions, discoverDocs } from "../docs/discover.js";
+import { DOCS_PREFIX, docsTag, manifestPath, readManifest, syncState } from "../docs/manifest.js";
+import { resolveProvider } from "../docs/resolve.js";
+import { formatSync, syncSources } from "../docs/sync.js";
 import { embeddingStatus, kickEmbedding, vectorRanker } from "../embeddings/queue.js";
 import { nodeLabel } from "../graph/format.js";
 import { coupled, dependencies, hotspots, impact, neighbors, orphans } from "../graph/query.js";
@@ -29,6 +42,7 @@ import { SqliteAdapter } from "../storage/sqlite/adapter.js";
 import type { GraphEdgeRow, GraphNodeRow, MemoryStatus, StatRow } from "../storage/types.js";
 import { emIndex } from "../tools/em_index.js";
 import { emPurge } from "../tools/em_purge.js";
+import { sourceFilter } from "../tools/em_search.js";
 import type { ToolResult } from "../tools/types.js";
 
 /** Every project that has a database under ~/.eminiar/projects, with its root when known. */
@@ -89,12 +103,15 @@ export function statsPayload(ctx: ProjectContext) {
     daily: g.daily(30).reverse(),
     index: {
       documents: db.countDocuments(),
-      bySource: Object.fromEntries(
-        ["exec", "batch", "file", "url", "code", "memory", "session", "inline"].map((s) => [
-          s,
-          db.countDocuments(s),
-        ]),
-      ),
+      bySource: {
+        ...Object.fromEntries(
+          ["exec", "batch", "file", "url", "code", "memory", "session", "inline"].map((s) => [
+            s,
+            db.countDocuments(s),
+          ]),
+        ),
+        docs: db.documentSourceStats(DOCS_PREFIX).reduce((n, s) => n + s.documents, 0),
+      },
       vectors: db.vecCount(),
       pendingEmbeddings: db.unembeddedChunkIds(1).length > 0,
       embeddings: embeddingStatus(ctx, db),
@@ -139,7 +156,7 @@ export async function searchPayload(
     limit,
     mode,
     vectorSearch,
-    ...(source ? { filters: { source } } : {}),
+    ...(source ? { filters: sourceFilter(source) } : {}),
   });
   return {
     query: r.query,
@@ -282,6 +299,90 @@ export function deleteMemory(ctx: ProjectContext, ref: number | string) {
   if (row?.name) return remove(ctx, db, row.name);
   db.memoryDelete(ref);
   return !!row;
+}
+
+// --- documentation -------------------------------------------------------
+
+export function docsPayload(ctx: ProjectContext) {
+  const db = getStorage(ctx);
+  const m = readManifest(ctx);
+  const stats = new Map(db.documentSourceStats(DOCS_PREFIX).map((s) => [s.source, s]));
+  const sources = m.sources.map((s) => {
+    const st = stats.get(docsTag(s.name));
+    return {
+      ...s,
+      documents: st?.documents ?? 0,
+      chunks: st?.chunks ?? 0,
+      latest: st?.latest ?? null,
+      sync: syncState(db, s.name) ?? null,
+    };
+  });
+  const known = new Set(m.sources.map((s) => docsTag(s.name)));
+  const orphans = [...stats.values()]
+    .filter((s) => !known.has(s.source))
+    .map((s) => ({ source: s.source, documents: s.documents, chunks: s.chunks }));
+  return {
+    manifest: relative(ctx.root, manifestPath(ctx)),
+    sources,
+    orphans,
+    totals: {
+      documents: sources.reduce((n, s) => n + s.documents, 0),
+      chunks: sources.reduce((n, s) => n + s.chunks, 0),
+    },
+    catalog: mergedCatalog(ctx.config.docs.catalog as CatalogEntry[]).length,
+    config: { ttlHours: ctx.config.docs.ttlHours, crawl: ctx.config.docs.crawl },
+  };
+}
+
+export function docsPagesPayload(ctx: ProjectContext, name: string, limit = 200) {
+  return getStorage(ctx).documentsBySource(docsTag(name), limit);
+}
+
+export function docsDiscoverPayload(ctx: ProjectContext, opts: DiscoverOptions) {
+  return discoverDocs(ctx, opts);
+}
+
+export interface DocsAddBody {
+  sources?: AddInput[] | undefined;
+  pick?: Pick | undefined;
+  names?: string[] | undefined;
+  includeDev?: boolean | undefined;
+  sync?: boolean | undefined;
+  force?: boolean | undefined;
+}
+
+export async function docsAddPayload(ctx: ProjectContext, body: DocsAddBody) {
+  const db = getStorage(ctx);
+  const o = body.pick
+    ? await addPicked(ctx, db, body.pick, {
+        names: body.names,
+        includeDev: body.includeDev,
+        sync: body.sync,
+        force: body.force,
+      })
+    : await addDocSources(ctx, db, body.sources ?? [], { sync: body.sync, force: body.force });
+  return { ...o, text: formatAdd(o) };
+}
+
+export async function docsSyncPayload(
+  ctx: ProjectContext,
+  names: string[] | undefined,
+  force: boolean,
+) {
+  const results = await syncSources(ctx, getStorage(ctx), names?.length ? names : undefined, {
+    force,
+  });
+  return { results, text: formatSync(results) };
+}
+
+export function docsRemovePayload(ctx: ProjectContext, name: string) {
+  return removeDocSource(ctx, getStorage(ctx), name);
+}
+
+export function docsResolvePayload(ctx: ProjectContext, provider: string) {
+  return resolveProvider(provider, {
+    catalog: mergedCatalog(ctx.config.docs.catalog as CatalogEntry[]),
+  });
 }
 
 // --- graph ---------------------------------------------------------------

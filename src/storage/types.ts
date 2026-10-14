@@ -63,8 +63,28 @@ export interface ChunkWithDoc extends ChunkRow {
   document: DocumentRow;
 }
 
+/** A document with its chunk count, for per-source listings. */
+export interface DocumentSummaryRow {
+  id: number;
+  source: string;
+  title: string;
+  uri: string | null;
+  created_at: number;
+  chunks: number;
+}
+
+/** Document and chunk totals for one source tag. */
+export interface SourceStatRow {
+  source: string;
+  documents: number;
+  chunks: number;
+  latest: number;
+}
+
 export interface SearchFilters {
   source?: string | string[] | undefined;
+  /** Every source tag starting with this prefix (e.g. `docs:` for all documentation sources). */
+  sourcePrefix?: string | undefined;
   contentType?: ContentType | undefined;
   /** Unix ms; only documents created at or after this time. */
   since?: number | undefined;

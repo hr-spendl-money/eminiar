@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectContext } from "../context.js";
+import { readManifest } from "../docs/manifest.js";
 import { parseMemoryFile } from "../memory/frontmatter.js";
 import { memoriesDir } from "../memory/store.js";
 import type { StorageAdapter } from "../storage/adapter.js";
@@ -33,6 +34,19 @@ export function renderProjectBrief(
 
   const hot = db.metricsTop({ kind: "file", limit: 5 }).filter((r) => r.score > 0);
   if (hot.length) lines.push(`Hot files (fan-in × churn): ${hot.map((r) => r.path).join(", ")}`);
+
+  try {
+    const docs = readManifest(ctx).sources;
+    if (docs.length)
+      lines.push(
+        `Docs indexed (em_docs {action:"lookup", query} before WebFetch/WebSearch): ${docs
+          .slice(0, 12)
+          .map((s) => s.name)
+          .join(", ")}${docs.length > 12 ? ` +${docs.length - 12} more` : ""}`,
+      );
+  } catch {
+    // the manifest is optional
+  }
 
   if (freshness) lines.push(freshness);
   return fitBudget(lines, budget);

@@ -77,11 +77,25 @@ export interface IndexPathSummary {
 }
 
 /** Index a file or every file under a directory matching `globs` (relative to the directory). */
+export interface IndexPathOptions {
+  source?: Source | undefined;
+  globs?: string[] | undefined;
+  recursive?: boolean | undefined;
+  ignore?: string[] | undefined;
+  /** Rewrite a file before indexing (e.g. render an OpenAPI spec as markdown); undefined keeps it as is. */
+  transform?:
+    | ((
+        content: string,
+        rel: string,
+      ) => { content: string; title?: string | undefined; kind?: Kind | undefined } | undefined)
+    | undefined;
+}
+
 export function indexPath(
   db: StorageAdapter,
   root: string,
   target: string,
-  opts: { source?: Source; globs?: string[]; recursive?: boolean; ignore?: string[] } = {},
+  opts: IndexPathOptions = {},
 ): IndexPathSummary {
   const abs = resolve(root, target);
   const summary: IndexPathSummary = { files: 0, indexed: 0, unchanged: 0, skipped: [], chunks: 0 };
@@ -110,10 +124,12 @@ export function indexPath(
         summary.skipped.push({ path: rel, reason: "binary" });
         continue;
       }
+      const t = opts.transform?.(content, rel);
       const r = indexContent(db, {
         source: opts.source ?? "file",
-        title: rel,
-        content,
+        title: t?.title ? `${t.title} (${rel})` : rel,
+        content: t?.content ?? content,
+        kind: t?.kind,
         uri: `file://${file}`,
       });
       if (r.created) summary.indexed++;

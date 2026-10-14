@@ -1,5 +1,6 @@
 import { emArchitecture } from "./em_architecture.js";
 import { emBatchExecute } from "./em_batch_execute.js";
+import { emDocs } from "./em_docs.js";
 import { emDoctor } from "./em_doctor.js";
 import { emExecute } from "./em_execute.js";
 import { emExecuteFile } from "./em_execute_file.js";
@@ -25,6 +26,7 @@ export const tools: ToolDef<any>[] = [
   emSearch,
   emIndex,
   emFetchAndIndex,
+  emDocs,
   emRemember,
   emRecall,
   emMemory,

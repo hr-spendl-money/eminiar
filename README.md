@@ -12,6 +12,14 @@ that make it work better:
 - **Search** — `em_search`, `em_fetch_and_index`, `em_index`: SQLite FTS5 (porter + trigram, BM25,
   typo correction) fused with local ONNX embeddings (bge-small via sqlite-vec). Hybrid by default,
   never blocks on the model download.
+- **Documentation knowledge base** — `em_docs`: discovers the project's own docs (READMEs, docs
+  folders, ADRs, OpenAPI / Swagger / Postman specs, agent instructions, env references) and the
+  third-party libraries, services, infrastructure and APIs it depends on (package manifests, env
+  prefixes, container images, Terraform / Kubernetes files, outbound HTTP calls in code), maps each
+  to its documentation through a built-in catalogue, the npm / PyPI / Go registries or a probe of
+  the usual docs locations, crawls it into the index under `docs:<name>` and answers questions from
+  it before the web. API specs are rendered one section per operation. The manifest
+  `.eminiar/docs.json` is committed; `/em-docs` and `/em-onboard` drive it.
 - **Session continuity** — hooks capture prompts, decisions, constraints, files, errors and loops
   into 23 categories; a ≤2 KB Session Guide is snapshotted before `/compact` and replayed on resume.
 - **Memory** — `em_remember` / `em_recall` / `em_memory`: named markdown memories under
@@ -30,7 +38,7 @@ that make it work better:
   an older version gets one automatic full code reindex on first use.
 - **Stats** — `em_stats`, a statusline, and a local web dashboard (`eminiar ui`): source explorer
   with impact and code details, a galaxy graph, architecture map, hotspots, routes, clusters,
-  decision record, index coverage, sessions and maintenance actions.
+  decision record, documentation sources, index coverage, sessions and maintenance actions.
 
 ## Install
 
@@ -50,7 +58,7 @@ separate, explicit choice).
 ## Using it from Claude Code
 
 The plugin injects short routing guidance at session start. Slash commands: `/em-stats`,
-`/em-doctor`, `/em-index`, `/em-search`, `/em-graph`, `/em-purge`.
+`/em-doctor`, `/em-index`, `/em-search`, `/em-docs`, `/em-graph`, `/em-onboard`, `/em-purge`.
 
 | Tool | Use for |
 |---|---|
@@ -58,6 +66,7 @@ The plugin injects short routing guidance at session start. Slash commands: `/em
 | `em_batch_execute {commands[{label, command}], queries}` | several commands + questions in one round trip |
 | `em_execute_file {path, code}` | big files; your code gets `$EM_FILE` |
 | `em_fetch_and_index {url, queries}` | docs and web pages (24 h cache) |
+| `em_docs {action: lookup \| discover \| add \| sync \| list \| remove \| resolve}` | the documentation knowledge base: ask it before WebFetch/WebSearch; `add {pick: "recommended"}` builds it |
 | `em_search {queries, sort}` | anything indexed, `sort: "timeline"` after a resume |
 | `em_recall {query}` / `em_remember {content, kind, name?}` | past decisions, constraints, errors |
 | `em_memory {action: list \| read \| edit \| rename \| delete \| status, name}` | the memory files themselves |
@@ -109,8 +118,46 @@ re-imports them (`em_reindex {scope: "memories"}` forces it). Each file is index
 search (`em_recall`, `em_search {source: "memory"}`) and becomes a `memory:<name>` graph node whose
 `mentions` edges make `em_graph_impact` list the memories to re-read before changing a file.
 Commit the directory so teammates share it. Rows recorded before 0.1.2 are migrated into files
-on first use. `/em-onboard` writes `onboarding/{overview,structure,commands,conventions}`, which
-every session start points at until they exist.
+on first use. `/em-onboard` writes `onboarding/{overview,structure,commands,conventions,documentation}`,
+which every session start points at until they exist.
+
+## Documentation knowledge base
+
+`em_docs {action: "discover"}` scans the project (and one level of sub-projects, for multi-repo
+workspaces and monorepos) without fetching anything:
+
+- **local**: READMEs and top-level guides, `docs/` and ADR folders, `.github` Copilot / Claude /
+  Cursor instructions, OpenAPI / Swagger / AsyncAPI / Postman / GraphQL / protobuf specs, env
+  examples, and the Terraform / Kubernetes / Helm / Compose / CI files;
+- **providers**: npm, PyPI and Go dependencies, env var prefixes (`SUMSUB_*`), container images,
+  infrastructure signals (Terraform, Kubernetes, Istio, Karpenter, Helm, Docker, GitHub Actions)
+  and **third-party APIs called from code** (every URL literal on a request-looking line, grouped
+  by host). Each is matched to the built-in catalogue (~120 libraries, services and tools with
+  their documentation URLs); packages the catalogue does not know are resolved through the
+  registries at add time (homepage + README), and unknown API hosts are probed for a docs site
+  (`docs.`, `developer.`, `/docs`, `/openapi.json`, …). A spec URL referenced in code is used
+  directly.
+
+`em_docs {action: "add", pick: "recommended"}` registers the local docs, the **third-party
+services** the project integrates and the APIs found in code in `.eminiar/docs.json` and indexes
+them. It is deliberately small: catalogue entries carry a tier, and frameworks (`library`) and
+platform (`infra`) stay out unless you ask (`pick: "infra" | "catalog" | "registry" | "all"`, or
+`names`), because Claude already knows them and their reference sites are large.
+`{action: "add", url | path | provider}` adds one source. **External APIs are indexed in full**:
+hosts called from code, documentation linked from code, probed docs sites and service-tier
+catalogue entries get `docs.crawl.api` (depth 2, up to 150 pages); dependencies get the small
+budget (depth 1, **8 pages** per source). Pages are cut at 120 KB and cached 7 days; OpenAPI documents and Postman collections — local or fetched — are rendered one markdown
+section per operation (parameters, request body, responses, schemas) so a lookup returns the exact
+endpoint. Documentation is **lexical-only by default** (`docs.embed: true` turns on vectors), so a
+crawl never queues model work. Pages land in the index under `docs:<name>`; `em_docs {action:
+"lookup", query}` searches them all (`em_search {source: "docs:*"}` does the same), `sync`
+refreshes, `remove` drops a source and its pages.
+
+Hooks keep Claude on the index: a `WebFetch` of a site that is already a documentation source is
+annotated with the source name, a `WebSearch` is told which sources exist, the session brief lists
+them, and `/em-onboard` builds the set and writes `onboarding/documentation`. The dashboard's
+**Docs** tab shows sources, pages, sync state, a discovery screen with checkboxes, and a
+docs-only search. Teams extend the catalogue with `docs.catalog` in `eminiar.config.json`.
 
 ## Configuration
 
@@ -118,7 +165,9 @@ every session start points at until they exist.
 See `eminiar.config.schema.json` for every key: `routing`, `sandbox` (timeouts, output cap, env
 allowlist, disabled languages), `search`, `embeddings`, `graph.include/exclude` (TS/JS, Python and
 Go by default; `node_modules`, `dist`, `vendor`, virtualenvs excluded), `git.maxCommits`,
-`index.docs`, `permissions.extraDeny`, `memories.dir` (default `.eminiar/memories`).
+`index.docs`, `permissions.extraDeny`, `memories.dir` (default `.eminiar/memories`), `docs`
+(`manifest`, `ttlHours`, `crawl.depth/maxPages/maxPageBytes`, `embed`,
+`discover.includeDev/subprojects`, extra `catalog` entries with a `tier`).
 
 Hooks add graph context without blocking anything: a session starts with a project brief
 (overview, accepted decisions, hot files, index freshness), subagents get the same brief, a Grep
@@ -135,6 +184,7 @@ eminiar search "query" [--timeline] [--code] [--source X]
 eminiar graph architecture | status | changes [ref] | impact src/foo.ts | deps | neighbors | path a b
 eminiar graph hotspots | routes | dead_code | cycles | clusters | coupled | orphans | pattern '<json>'
 eminiar index docs/ | reindex [--scope code|git|metrics|docs|memories|embeddings|all] [--full]
+eminiar docs discover | add --pick recommended | add --url U | add --provider npm:zod | sync | lookup "q" | list | remove name
 eminiar stats | recall "query" | ui [--port 7331] [--no-open] | statusline
 ```
 
@@ -150,6 +200,9 @@ eminiar stats | recall "query" | ui [--port 7331] [--no-open] | statusline
   cluster structure with import cycles, and a behavior tree of possible calls from an operation.
 - **Memory** — browser and editor for `.eminiar/memories`, decision status and supersedes, and
   a compiled decision record.
+- **Docs** — documentation sources with their pages and sync state, add by url / path / provider,
+  a discovery screen (local docs, catalogue providers, APIs found in code, registry packages,
+  unknowns with a URL field) and a docs-only search.
 - **Coverage** — indexed, partial, skipped and unsupported files with reasons, freshness against
   HEAD and the working tree, per-file reindex.
 - **Sessions** and **System** — event timelines, actions, doctor checks and the index-run log.

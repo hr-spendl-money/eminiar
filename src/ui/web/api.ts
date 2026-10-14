@@ -269,6 +269,106 @@ export interface MemoryList {
   gitignored: boolean;
   memories: MemoryRowUi[];
 }
+export interface DocsSyncState {
+  at: number;
+  pages: number;
+  documents: number;
+  chunks: number;
+  errors: string[];
+  skipped: number;
+  ms: number;
+}
+export interface DocSourceUi {
+  name: string;
+  kind: "url" | "path";
+  urls?: string[];
+  path?: string;
+  glob?: string[];
+  provider?: string;
+  title?: string;
+  crawl?: { depth?: number; maxPages?: number };
+  ttlHours?: number;
+  tags?: string[];
+  notes?: string;
+  addedAt: string;
+  documents: number;
+  chunks: number;
+  latest: number | null;
+  sync: DocsSyncState | null;
+}
+export interface DocsList {
+  manifest: string;
+  sources: DocSourceUi[];
+  orphans: Array<{ source: string; documents: number; chunks: number }>;
+  totals: { documents: number; chunks: number };
+  catalog: number;
+  config: { ttlHours: number; crawl: { depth: number; maxPages: number } };
+}
+export interface DocPage {
+  id: number;
+  title: string;
+  uri: string | null;
+  created_at: number;
+  chunks: number;
+}
+export interface LocalCandidateUi {
+  name: string;
+  path: string;
+  glob?: string[];
+  files: number;
+  bytes: number;
+  why: string;
+  project: string;
+  registered: boolean;
+}
+export interface ProviderCandidateUi {
+  name: string;
+  provider: string;
+  title: string;
+  urls: string[];
+  crawl?: { depth?: number; maxPages?: number };
+  confidence: "catalog" | "registry" | "probe" | "unknown";
+  tier?: "service" | "infra" | "library";
+  usedBy: string[];
+  evidence: string[];
+  registered: boolean;
+}
+export interface DiscoveryUi {
+  root: string;
+  projects: string[];
+  local: LocalCandidateUi[];
+  providers: ProviderCandidateUi[];
+}
+export interface DocsSyncRow {
+  name: string;
+  kind: string;
+  pages: number;
+  indexed: number;
+  unchanged: number;
+  cached: number;
+  chunks: number;
+  skipped: number;
+  errors: string[];
+  ms: number;
+}
+export interface DocsAddResult {
+  added: string[];
+  updated: string[];
+  failed: Array<{ name: string; reason: string }>;
+  sync: DocsSyncRow[];
+  text: string;
+}
+export interface SearchHitUi {
+  title: string;
+  source: string;
+  uri: string | null;
+  doc: number;
+  chunk: number;
+  lines: string | null;
+  created: number;
+  score: number;
+  snippet: string;
+}
 export interface MemoryBody {
   name: string;
   kind: string;

@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getContext } from "../context.js";
+import { readManifest } from "../docs/manifest.js";
 import { memoriesDir } from "../memory/store.js";
 import { renderProjectBrief } from "../session/brief.js";
 import { setCurrentSession } from "../session/current.js";
@@ -18,6 +19,7 @@ export function routingGuidance(mode: string): string {
     "- em_batch_execute {commands:[{label, command}], queries}: several commands in parallel, answers in one round trip.",
     "- em_execute_file {path, code}: process a large file; your code gets $EM_FILE and only what it prints returns.",
     "- em_fetch_and_index {url, queries}: docs and web pages, indexed with a 24h cache.",
+    '- em_docs {action:"lookup", query}: the project\'s documentation knowledge base (local docs plus the libraries, services and APIs it uses) — ask it before WebFetch/WebSearch; {action:"discover"} / {action:"add", pick:"recommended"} build it, {action:"sync"} refreshes it.',
     '- em_search {queries, sort:"timeline"}: everything indexed plus session memory; em_recall {query} for past decisions, constraints and errors.',
     "- em_remember {content, kind, name?, status?}: record a decision/constraint/fact as a markdown memory under .eminiar/memories (survives compaction, shareable via git); em_memory {action: list|read|edit|rename|delete|status} manages them.",
     '- em_architecture {aspects?}: the project map (folders, entry points, routes, hotspots, decisions) in one call; em_symbols {name_path | mode:"overview", file} for a symbol or a file outline; em_graph_impact {node} before a refactor; em_graph_changes for what the current diff reaches; em_graph_query {pattern | preset} to walk the graph; em_index_status for coverage. em_stats shows savings.',
@@ -80,9 +82,15 @@ export const sessionStart: HookHandler = (input) => {
   }
   try {
     const onboarding = join(memoriesDir(ctx), "onboarding");
-    if (!existsSync(onboarding) || !readdirSync(onboarding).some((f) => f.endsWith(".md")))
+    const onboarded =
+      existsSync(onboarding) && readdirSync(onboarding).some((f) => f.endsWith(".md"));
+    if (!onboarded)
       parts.push(
         "No onboarding memories yet: run /eminiar:em-onboard once so future sessions start with the project's structure, build and test commands.",
+      );
+    else if (!readManifest(ctx).sources.length)
+      parts.push(
+        'No documentation sources registered yet: em_docs {action:"discover"} maps this project\'s libraries, services and APIs to their documentation, and {action:"add", pick:"recommended"} indexes it for em_docs lookup.',
       );
   } catch {
     // the nudge is optional

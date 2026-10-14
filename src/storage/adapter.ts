@@ -3,6 +3,7 @@ import type {
   ChunkWithDoc,
   DocumentInput,
   DocumentRow,
+  DocumentSummaryRow,
   EventInput,
   EventRow,
   FileIndexInput,
@@ -23,6 +24,7 @@ import type {
   SearchFilters,
   SessionRow,
   SnapshotRow,
+  SourceStatRow,
   StatDelta,
   StatRow,
   VecHit,
@@ -46,6 +48,10 @@ export interface StorageAdapter {
   deleteDocument(id: number): void;
   deleteDocumentsBySource(source: string): number;
   countDocuments(source?: string): number;
+  /** Documents of one source, newest first, with chunk counts. */
+  documentsBySource(source: string, limit?: number): DocumentSummaryRow[];
+  /** Document/chunk totals per source tag starting with `prefix` (`docs:` → every docs source). */
+  documentSourceStats(prefix: string): SourceStatRow[];
   getChunks(ids: number[]): ChunkWithDoc[];
   chunksOfDocument(documentId: number): ChunkWithDoc[];
   /** Code chunks that make up a symbol's body, in order (empty when the file predates symbol chunks). */

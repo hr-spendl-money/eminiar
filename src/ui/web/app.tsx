@@ -6,6 +6,7 @@ import { navigate, useRoute, type View } from "./router.js";
 import { ago, cls } from "./util.js";
 import { Architecture } from "./views/Architecture.js";
 import { Coverage } from "./views/Coverage.js";
+import { Docs } from "./views/Docs.js";
 import { Explore } from "./views/Explore.js";
 import { Galaxy } from "./views/Galaxy.js";
 import { Memory } from "./views/Memory.js";
@@ -19,6 +20,7 @@ const TABS: Array<[View, string]> = [
   ["galaxy", "Galaxy"],
   ["architecture", "Architecture"],
   ["memory", "Memory"],
+  ["docs", "Docs"],
   ["coverage", "Coverage"],
   ["sessions", "Sessions"],
   ["system", "System"],
@@ -139,6 +141,7 @@ export function App(): JSX.Element {
         {view === "galaxy" && <Galaxy params={route.params} />}
         {view === "architecture" && <Architecture params={route.params} />}
         {view === "memory" && <Memory params={route.params} />}
+        {view === "docs" && <Docs params={route.params} />}
         {view === "coverage" && <Coverage />}
         {view === "sessions" && <Sessions />}
         {view === "system" && <System onChanged={() => setTick((x) => x + 1)} />}

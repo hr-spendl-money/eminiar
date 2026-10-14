@@ -1,7 +1,8 @@
 import { realpathSync, statSync } from "node:fs";
-import { extname, relative, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import type { ProjectContext } from "../context.js";
 import { getContext } from "../context.js";
+import { type DocSource, readManifestAt } from "../docs/manifest.js";
 import { renderProjectBrief } from "../session/brief.js";
 import { serverAlive } from "../session/server-alive.js";
 import type { StorageAdapter } from "../storage/adapter.js";
@@ -46,6 +47,39 @@ interface Suggestion {
   reason: string;
   /** For Agent/Task in enforce mode: prefix the prompt instead of denying. */
   prefixPrompt?: string;
+  /** Context only, never a denial (the native tool is still the right one). */
+  annotateOnly?: boolean;
+}
+
+/** Registered documentation sources (default manifest location; cheap, cached by the OS). */
+function docsSources(root: string): DocSource[] {
+  try {
+    return readManifestAt(join(root, ".eminiar", "docs.json")).sources;
+  } catch {
+    return [];
+  }
+}
+
+/** The documentation source whose seed hosts cover this URL, if any. */
+export function docsSourceFor(url: string, root: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  for (const s of docsSources(root)) {
+    for (const u of s.urls ?? []) {
+      try {
+        const h = new URL(u).hostname.toLowerCase();
+        if (host === h || host.endsWith(`.${h.replace(/^(www|docs|developer|developers)\./, "")}`))
+          return s.name;
+      } catch {
+        // skip malformed seed
+      }
+    }
+  }
+  return undefined;
 }
 
 const HEAVY_BASH =
@@ -109,11 +143,26 @@ export function suggest(
       }
       return undefined;
     }
-    case "WebFetch":
+    case "WebFetch": {
+      const url = String(input.url ?? "");
+      const covered = url ? docsSourceFor(url, root) : undefined;
       return {
         tool: "em_fetch_and_index",
-        reason: `em_fetch_and_index {url, queries} indexes the page and returns only the relevant sections`,
+        reason: covered
+          ? `this site is already indexed as documentation source "${covered}" — em_docs {action:"lookup", query} answers from the index; em_fetch_and_index {url, queries} fetches one page if it is missing`
+          : `em_fetch_and_index {url, queries} indexes the page and returns only the relevant sections; em_docs {action:"add", url} keeps documentation permanently`,
       };
+    }
+    case "WebSearch": {
+      const sources = docsSources(root);
+      if (!sources.length) return undefined;
+      const names = sources.slice(0, 10).map((s) => s.name);
+      return {
+        tool: "em_docs",
+        annotateOnly: true,
+        reason: `${sources.length} documentation source(s) are indexed locally (${names.join(", ")}${sources.length > 10 ? ", …" : ""}); em_docs {action:"lookup", query} answers from them without a web round trip`,
+      };
+    }
     case "Agent":
     case "Task":
       return {
@@ -189,6 +238,7 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
   const hint = graphContext(ctx, input);
   const s = suggest(input.tool_name, input.tool_input, ctx.root);
   if (!s) return withContext(undefined, hint);
+  if (s.annotateOnly) return withContext(annotate(s), hint);
 
   if (mode === "enforce") {
     if (s.prefixPrompt) {

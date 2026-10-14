@@ -14,7 +14,14 @@ surfacing only the answer.
 - **Batch research.** `em_batch_execute` runs labelled commands in parallel and answers `queries`
   against all outputs in one round trip.
 - **Large files.** `em_execute_file` processes a file in the sandbox; only what you print returns.
-- **Web pages.** `em_fetch_and_index` fetches and indexes a URL; follow with `em_search`.
+- **Library, service and API docs.** `em_docs {action: "lookup", query}` answers from the
+  project's documentation knowledge base (local docs plus the third-party libraries, services,
+  infrastructure and APIs it uses, registered in `.eminiar/docs.json`). Ask it before
+  `WebFetch`/`WebSearch`; `{action: "discover"}` finds what to index, `{action: "add", pick:
+  "recommended"}` or `{action: "add", url | path | provider}` indexes it, `{action: "sync"}`
+  refreshes. `/em-docs` is the slash command.
+- **Web pages.** `em_fetch_and_index` fetches and indexes a URL; follow with `em_search`. Keep a
+  page you will need again with `em_docs {action: "add", url}`.
 - **Ask what's known.** `em_search` (multiple queries, `sort: "timeline"` after a resume) and
   `em_recall` for decisions, constraints and errors captured from earlier sessions.
 - **Record decisions.** `em_remember {content, kind, name?}` with kind

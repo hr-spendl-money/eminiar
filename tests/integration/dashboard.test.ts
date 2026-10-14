@@ -144,6 +144,43 @@ describe("dashboard", () => {
     });
     expect((await j<MemList>("/api/memories")).memories.length).toBe(list.memories.length + 1);
 
+    // documentation sources through the API
+    mkdirSync(join(root, "docs"));
+    writeFileSync(join(root, "docs/intro.md"), "# Intro\n\nDashboard docs api content.\n");
+    const addedDocs = JSON.parse(
+      (await post("/api/docs", { sources: [{ name: "docs", path: "docs" }], sync: true })).body,
+    ) as { added: string[]; sync: Array<{ pages: number }> };
+    expect(addedDocs.added).toEqual(["docs"]);
+    expect(addedDocs.sync[0]?.pages).toBe(1);
+    const docsList = await j<{
+      sources: Array<{ name: string; documents: number }>;
+      manifest: string;
+    }>("/api/docs");
+    expect(docsList.manifest).toBe(".eminiar/docs.json");
+    expect(docsList.sources[0]?.documents).toBe(1);
+    const pages = await j<Array<{ title: string }>>("/api/docs/pages?name=docs");
+    expect(pages[0]?.title).toBe("docs/intro.md");
+    const disc = await j<{ local: Array<{ name: string; registered: boolean }> }>(
+      "/api/docs/discover",
+    );
+    expect(disc.local.find((c) => c.name === "docs")?.registered).toBe(true);
+    const dsearch = await j<{ hits: Array<{ source: string }> }>(
+      "/api/search?q=dashboard&mode=lexical&source=docs:*",
+    );
+    expect(dsearch.hits[0]?.source).toBe("docs:docs");
+    const synced = JSON.parse((await post("/api/docs/sync", { names: ["docs"] })).body) as {
+      results: Array<{ unchanged: number }>;
+    };
+    expect(synced.results[0]?.unchanged).toBe(1);
+    const resolved = await j<{ via: string }>("/api/docs/resolve?provider=npm:zod");
+    expect(resolved.via).toBe("catalog");
+    const removedDocs = await j<{ removed: boolean; documents: number }>("/api/docs?name=docs", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+    });
+    expect(removedDocs).toEqual({ removed: true, documents: 1 });
+    expect((await get("/api/docs/pages")).status).toBe(400);
+
     const sessions = await j<unknown[]>("/api/sessions");
     expect(Array.isArray(sessions)).toBe(true);
 
