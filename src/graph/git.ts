@@ -12,7 +12,18 @@ interface Commit {
 
 const DAY = 86_400_000;
 
-/** `git log --name-only` since `after` (exclusive), newest first. */
+/** HEAD sha of the repository containing `root`, or undefined outside git. */
+export function gitHead(root: string): string | undefined {
+  const r = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+  const sha = r.status === 0 ? r.stdout?.trim() : "";
+  return sha || undefined;
+}
+
+/**
+ * `git log --name-only` since `after` (exclusive), newest first. `--relative` makes
+ * paths relative to `root` even when the project is a subdirectory of the repo, so
+ * they line up with graph file ids.
+ */
 function readLog(root: string, maxCommits: number, after?: string): Commit[] {
   const range = after ? [`${after}..HEAD`] : [];
   const r = spawnSync(
@@ -21,6 +32,7 @@ function readLog(root: string, maxCommits: number, after?: string): Commit[] {
       "log",
       "--name-only",
       "--no-merges",
+      "--relative",
       "--format=%x00%H%x1f%an%x1f%at",
       `-n`,
       String(maxCommits),
@@ -59,10 +71,7 @@ export function reindexGit(
   root: string,
   opts: { maxCommits: number; full?: boolean },
 ): GitSummary {
-  const head = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  }).stdout?.trim();
+  const head = gitHead(root);
   if (!head) return { commits: 0, coChangeEdges: 0, files: 0 };
   const since = opts.full ? undefined : db.metaGet("last_git_sha");
   if (since === head) return { commits: 0, coChangeEdges: 0, files: 0 };

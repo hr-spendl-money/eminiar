@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { kickEmbedding } from "../embeddings/queue.js";
-import { gitignoreHint, MEMORY_KINDS, reconcile, write } from "../memory/store.js";
+import { gitignoreHint, MEMORY_KINDS, MEMORY_STATUSES, reconcile, write } from "../memory/store.js";
 import { getCurrentSession } from "../session/current.js";
 import { getStorage } from "../storage/index.js";
 import { defineTool, errorResult, text } from "./types.js";
@@ -21,6 +21,14 @@ export const emRemember = defineTool({
         "topic/slug (lowercase, [a-z0-9._-]), e.g. auth/session-tokens; derived from kind + content when omitted",
       ),
     replace: z.boolean().optional().describe("Overwrite a memory that already has this name"),
+    status: z
+      .enum(MEMORY_STATUSES)
+      .optional()
+      .describe("decisions: proposed | accepted (default) | superseded | deprecated"),
+    supersedes: z
+      .string()
+      .optional()
+      .describe("Name of the decision this one replaces; it is marked superseded"),
     tags: z.array(z.string()).optional(),
     related_files: z
       .array(z.string())
@@ -49,6 +57,8 @@ export const emRemember = defineTool({
         related,
         replace: args.replace,
         sessionId,
+        status: args.status,
+        supersedes: args.supersedes,
       });
     } catch (err) {
       return errorResult((err as Error).message);
@@ -63,7 +73,7 @@ export const emRemember = defineTool({
     kickEmbedding(ctx, db);
     const hint = gitignoreHint(ctx);
     return text(
-      `remembered ${r.name} (${args.kind}) → ${r.path}${r.created ? "" : " (replaced)"}${hint ? `\n${hint}` : ""}`,
+      `remembered ${r.name} (${args.kind}${args.status ? `, ${args.status}` : ""}) → ${r.path}${r.created ? "" : " (replaced)"}${r.superseded ? `; ${r.superseded} marked superseded` : ""}${hint ? `\n${hint}` : ""}`,
     );
   },
 });

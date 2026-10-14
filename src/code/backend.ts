@@ -13,6 +13,8 @@ import { treeSitterBackend } from "./treesitter-backend.js";
 export interface CodeBackend {
   id: "tree-sitter" | "lsp";
   supports(rel: string): boolean;
+  /** Language name recorded in file_index (e.g. "typescript"), undefined when unsupported. */
+  languageOf(rel: string): string | undefined;
   parse(root: string, rel: string, code: string): Promise<ParsedFile>;
   /** Incoming edges that mean "uses this symbol": calls, references, extends, implements. */
   references(db: StorageAdapter, symbolId: string): GraphEdgeRow[];

@@ -8,6 +8,7 @@ export const USE_EDGES = ["calls", "references", "extends", "implements"];
 export const treeSitterBackend = {
   id: "tree-sitter" as const,
   supports: (rel: string) => grammarFor(rel) !== undefined,
+  languageOf: (rel: string) => grammarFor(rel),
   parse: parseFile,
   references: (db: StorageAdapter, symbolId: string): GraphEdgeRow[] =>
     db.graphEdgesTo([symbolId], USE_EDGES),

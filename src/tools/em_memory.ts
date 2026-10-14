@@ -4,11 +4,13 @@ import {
   edit,
   list,
   MEMORY_KINDS,
+  MEMORY_STATUSES,
   memoriesDir,
   read,
   reconcile,
   remove,
   rename,
+  setMeta,
 } from "../memory/store.js";
 import { getStorage } from "../storage/index.js";
 import type { MemoryRow } from "../storage/types.js";
@@ -23,7 +25,8 @@ function firstLine(s: string, max = 140): string {
 export function memoryLine(m: MemoryRow): string {
   const tags = m.tags ? (JSON.parse(m.tags) as string[]) : [];
   const when = new Date(m.updated_at ?? m.created_at).toISOString().slice(0, 10);
-  return `${m.name} [${m.kind}] ${when}${tags.length ? ` #${tags.join(",")}` : ""} — ${firstLine(m.content)} (${(m.content.length / 1024).toFixed(1)} KB)`;
+  const status = m.status && m.status !== "accepted" ? ` (${m.status})` : "";
+  return `${m.name} [${m.kind}${status}] ${when}${tags.length ? ` #${tags.join(",")}` : ""} — ${firstLine(m.content)} (${(m.content.length / 1024).toFixed(1)} KB)`;
 }
 
 export const emMemory = defineTool({
@@ -31,10 +34,16 @@ export const emMemory = defineTool({
   description:
     "Manage the named markdown memories under .eminiar/memories (written by em_remember or by hand): list them (optionally one topic), read one, edit part of one, rename one (mem:<old> references follow), or delete one. Compact output; a read is trimmed to max_tokens.",
   schema: {
-    action: z.enum(["list", "read", "edit", "rename", "delete"]),
-    name: z.string().optional().describe("topic/slug (read, edit, rename, delete)"),
+    action: z.enum(["list", "read", "edit", "rename", "delete", "status"]),
+    name: z.string().optional().describe("topic/slug (read, edit, rename, delete, status)"),
     topic: z.string().optional().describe("list: only memories under this topic"),
     kind: z.enum(MEMORY_KINDS).optional().describe("list: only this kind"),
+    status: z
+      .enum(MEMORY_STATUSES)
+      .optional()
+      .describe(
+        "list: only this status; status: the new status (proposed|accepted|superseded|deprecated)",
+      ),
     find: z.string().optional().describe("edit: text (or regex) to replace in the body"),
     replace: z.string().optional().describe("edit: replacement"),
     regex: z.boolean().optional().describe("edit: treat find as a regular expression"),
@@ -54,8 +63,19 @@ export const emMemory = defineTool({
     const summary = reconcile(ctx, db);
     try {
       switch (args.action) {
+        case "status": {
+          if (!args.name || !args.status) return errorResult("status needs `name` and `status`");
+          if (!setMeta(ctx, db, args.name, { status: args.status }))
+            return errorResult(`no memory named "${args.name}"`);
+          return text(`${args.name} is now ${args.status}`);
+        }
         case "list": {
-          const rows = list(ctx, db, { topic: args.topic, kind: args.kind, limit: args.limit });
+          const rows = list(ctx, db, {
+            topic: args.topic,
+            kind: args.kind,
+            status: args.status,
+            limit: args.limit,
+          });
           if (!rows.length)
             return text(
               `no memories${args.topic ? ` under ${args.topic}/` : ""}${args.kind ? ` of kind ${args.kind}` : ""} in ${memoriesDir(ctx)}; em_remember writes them${summary.skipped.length ? ` (${summary.skipped.length} file(s) skipped for invalid names, e.g. ${summary.skipped[0]})` : ""}`,
@@ -67,7 +87,7 @@ export const emMemory = defineTool({
           const m = read(ctx, db, args.name);
           if (!m) return errorResult(`no memory named "${args.name}" (em_memory {action:"list"})`);
           const budget = (args.max_tokens ?? 2000) * 4;
-          const head = `${m.name} [${m.kind}] created ${m.created.slice(0, 10)} updated ${m.updated.slice(0, 10)}${m.tags.length ? ` #${m.tags.join(",")}` : ""}${m.related.length ? ` related: ${m.related.join(", ")}` : ""} · ${m.path}`;
+          const head = `${m.name} [${m.kind}${m.status ? `, ${m.status}` : ""}]${m.supersedes ? ` supersedes ${m.supersedes}` : ""} created ${m.created.slice(0, 10)} updated ${m.updated.slice(0, 10)}${m.tags.length ? ` #${m.tags.join(",")}` : ""}${m.related.length ? ` related: ${m.related.join(", ")}` : ""} · ${m.path}`;
           const body =
             m.body.length > budget
               ? `${m.body.slice(0, budget)}\n… ${m.body.length - budget} more chars (em_search {document_ids:[${m.row.document_id}]} or raise max_tokens)`

@@ -1,10 +1,13 @@
+import { emArchitecture } from "./em_architecture.js";
 import { emBatchExecute } from "./em_batch_execute.js";
 import { emDoctor } from "./em_doctor.js";
 import { emExecute } from "./em_execute.js";
 import { emExecuteFile } from "./em_execute_file.js";
 import { emFetchAndIndex } from "./em_fetch_and_index.js";
 import { emGraphAdd, emGraphImpact, emGraphQuery, emReindex } from "./em_graph.js";
+import { emGraphChanges } from "./em_graph_changes.js";
 import { emIndex } from "./em_index.js";
+import { emIndexStatus } from "./em_index_status.js";
 import { emMemory } from "./em_memory.js";
 import { emPurge } from "./em_purge.js";
 import { emRecall } from "./em_recall.js";
@@ -26,10 +29,13 @@ export const tools: ToolDef<any>[] = [
   emRecall,
   emMemory,
   emSymbols,
+  emArchitecture,
   emGraphQuery,
   emGraphImpact,
+  emGraphChanges,
   emGraphAdd,
   emReindex,
+  emIndexStatus,
   emStats,
   emPurge,
   emDoctor,

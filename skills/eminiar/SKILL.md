@@ -27,7 +27,19 @@ surfacing only the answer.
   definition; `{mode: "references", name_path}` lists callers and other uses. Search hits on code
   are titled by symbol (`src/x.ts > Class.method`). `em_search {mode: "regex"}` greps indexed
   content with context.
+- **Start from the map.** `em_architecture` gives languages, folders, entry points, routes, hotspots
+  and accepted decisions in one call; ask for `aspects` to keep it short. Use it before listing
+  directories or reading files to orient.
 - **Before refactors.** `em_graph_impact` on a file or symbol lists dependents, co-changing files,
-  memories that mention it, and the reasons.
+  memories that mention it, and the reasons. `em_graph_changes` does the same for the whole working
+  tree diff (or against a ref) and rates each touched symbol's exposure.
+- **Ask the graph.** `em_graph_query { pattern }` walks typed edges (`calls`, `imports`, `handles`,
+  `extends` …) from a filter to a filter; presets cover `hotspots`, `routes`, `dead_code`, `cycles`,
+  `clusters`, `coupled`, `orphans`.
+- **Trust, but check coverage.** `em_index_status` says whether the graph is behind HEAD or the
+  working tree and which files were skipped. A clean result means no recorded gap, not proof of
+  completeness; verify negative claims ("nothing calls X") against it.
+- **Decisions have a lifecycle.** `em_remember {kind: "decision", status, supersedes}` records ADR-style
+  decisions; `em_memory {action: "status"}` changes one. `em_architecture` lists the accepted ones.
 
 Plain `Bash`, `Read` and `Grep` stay right for short, fixed outputs and for files you will edit.

@@ -201,6 +201,74 @@ ALTER TABLE chunks ADD COLUMN symbol_id TEXT;
 CREATE INDEX IF NOT EXISTS chunks_symbol ON chunks(symbol_id);
 `,
   },
+  {
+    // Graph depth: nodes may come from an "analysis" pass (routes, link fixes), so the
+    // source CHECK goes; a kind index serves the explorer; graph_metrics holds per-node
+    // fan-in/out, size, complexity, churn, hotspot score and cluster; file_index records
+    // why a file was not (fully) indexed; index_runs is a short log of index passes.
+    version: 4,
+    sql: `
+CREATE TABLE graph_nodes_v4 (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  path TEXT,
+  start_line INTEGER,
+  end_line INTEGER,
+  source TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1,
+  meta TEXT,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO graph_nodes_v4 (id, kind, name, path, start_line, end_line, source, confidence, meta, updated_at)
+  SELECT id, kind, name, path, start_line, end_line, source, confidence, meta, updated_at FROM graph_nodes;
+DROP TABLE graph_nodes;
+ALTER TABLE graph_nodes_v4 RENAME TO graph_nodes;
+CREATE INDEX IF NOT EXISTS graph_nodes_name ON graph_nodes(name);
+CREATE INDEX IF NOT EXISTS graph_nodes_path ON graph_nodes(path);
+CREATE INDEX IF NOT EXISTS graph_nodes_kind ON graph_nodes(kind);
+
+CREATE TABLE IF NOT EXISTS graph_metrics (
+  node_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  path TEXT,
+  fan_in INTEGER NOT NULL DEFAULT 0,
+  fan_out INTEGER NOT NULL DEFAULT 0,
+  loc INTEGER NOT NULL DEFAULT 0,
+  complexity INTEGER NOT NULL DEFAULT 0,
+  commits_90d INTEGER NOT NULL DEFAULT 0,
+  score REAL NOT NULL DEFAULT 0,
+  cluster INTEGER,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS graph_metrics_score ON graph_metrics(kind, score DESC);
+CREATE INDEX IF NOT EXISTS graph_metrics_cluster ON graph_metrics(cluster);
+CREATE INDEX IF NOT EXISTS graph_metrics_path ON graph_metrics(path);
+
+ALTER TABLE memories ADD COLUMN status TEXT;
+ALTER TABLE memories ADD COLUMN supersedes TEXT;
+
+ALTER TABLE file_index ADD COLUMN status TEXT NOT NULL DEFAULT 'indexed';
+ALTER TABLE file_index ADD COLUMN reason TEXT;
+ALTER TABLE file_index ADD COLUMN symbols INTEGER;
+ALTER TABLE file_index ADD COLUMN errors TEXT;
+
+CREATE TABLE IF NOT EXISTS index_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  scanned INTEGER NOT NULL DEFAULT 0,
+  indexed INTEGER NOT NULL DEFAULT 0,
+  unchanged INTEGER NOT NULL DEFAULT 0,
+  skipped INTEGER NOT NULL DEFAULT 0,
+  removed INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0,
+  head_sha TEXT,
+  detail TEXT
+);
+`,
+  },
 ];
 
 /** vec0 lives outside the migration list: it needs the extension loaded first and takes the dimension. */

@@ -1,5 +1,6 @@
 import type { ProjectContext } from "../context.js";
 import { getCurrentSession } from "../session/current.js";
+import type { StorageAdapter } from "../storage/adapter.js";
 import { getStorage } from "../storage/index.js";
 import type { StatRow } from "../storage/types.js";
 import { globalDb } from "./global.js";
@@ -22,6 +23,21 @@ export function recordStat(
   } catch {
     // stats must never break a tool call
   }
+}
+
+/**
+ * Bytes Claude would have read to learn the same thing by hand: the size of every
+ * indexed file a graph answer points at. Lets graph/symbol tools report real savings.
+ */
+export function fileBytes(db: StorageAdapter, paths: Iterable<string | null | undefined>): number {
+  let total = 0;
+  const seen = new Set<string>();
+  for (const p of paths) {
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    total += db.fileIndexGet(p)?.size ?? 0;
+  }
+  return total;
 }
 
 export interface StatSummary {

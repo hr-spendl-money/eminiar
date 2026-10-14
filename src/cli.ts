@@ -196,13 +196,42 @@ const commands: Record<string, Command> = {
     const limit = values.limit ? Number(values.limit) : undefined;
     const depth = values.depth ? Number(values.depth) : undefined;
     let r: { content: Array<{ text: string }>; isError?: boolean };
-    if (["hotspots", "coupled", "orphans", "stats"].includes(sub)) {
+    const presets = [
+      "hotspots",
+      "coupled",
+      "orphans",
+      "dead_code",
+      "routes",
+      "cycles",
+      "clusters",
+      "stats",
+    ];
+    if (presets.includes(sub)) {
       r = await emGraphQuery.handler({ preset: sub as "hotspots", limit }, ctx);
     } else if (sub === "find") {
       r = await emGraphQuery.handler({ query: node, limit }, ctx);
+    } else if (sub === "pattern") {
+      if (!node) {
+        console.error(
+          'usage: eminiar graph pattern \'{"from":{"kind":"route"},"edge":{"kinds":["handles"],"direction":"in"}}\'',
+        );
+        return 2;
+      }
+      r = await emGraphQuery.handler({ pattern: JSON.parse(node), limit }, ctx);
+    } else if (sub === "changes") {
+      const { emGraphChanges } = await import("./tools/em_graph_changes.js");
+      r = await emGraphChanges.handler({ ref: node, limit }, ctx);
+    } else if (sub === "architecture") {
+      const { emArchitecture } = await import("./tools/em_architecture.js");
+      r = await emArchitecture.handler({}, ctx);
+    } else if (sub === "status") {
+      const { emIndexStatus } = await import("./tools/em_index_status.js");
+      r = await emIndexStatus.handler({}, ctx);
     } else {
       if (!node) {
-        console.error("usage: eminiar graph <impact|deps|dependents|neighbors|path> <node>");
+        console.error(
+          "usage: eminiar graph <impact|deps|dependents|neighbors|path|find|pattern|changes|architecture|status|hotspots|coupled|orphans|dead_code|routes|cycles|clusters|stats> [node]",
+        );
         return 2;
       }
       const mode =

@@ -6,6 +6,8 @@
  *   kind: decision
  *   tags: [auth, security]
  *   related: [file:src/auth.ts, sym:src/auth.ts#issueToken]
+ *   status: accepted            # decisions: proposed | accepted | superseded | deprecated
+ *   supersedes: auth/old-tokens # the decision this one replaces
  *   created: 2026-10-13T15:00:00Z
  *   updated: 2026-10-13T15:04:11Z
  *   ---
@@ -16,7 +18,7 @@
 export type MemoryMeta = Record<string, string | string[]>;
 
 /** Known keys are written first, in this order. */
-const ORDER = ["name", "kind", "tags", "related", "created", "updated"];
+const ORDER = ["name", "kind", "status", "supersedes", "tags", "related", "created", "updated"];
 
 function unquote(s: string): string {
   const t = s.trim();
