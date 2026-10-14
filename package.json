@@ -36,15 +36,17 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup && node scripts/copy-grammars.mjs && tsx scripts/gen-schema.ts",
+    "build": "tsup && tsup --config tsup.web.config.ts && node scripts/copy-grammars.mjs && tsx scripts/gen-schema.ts",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "validate": "claude plugin validate .",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "build:ui": "tsup --config tsup.web.config.ts",
+    "dev:ui": "tsup --config tsup.web.config.ts --watch"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
@@ -61,8 +63,13 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^24.0.0",
+    "@types/prismjs": "^1.26.6",
     "@types/turndown": "^5.0.5",
+    "d3-force": "^3.0.0",
+    "preact": "^10.29.8",
+    "prismjs": "^1.30.0",
     "tree-sitter-javascript": "^0.23.1",
     "tree-sitter-typescript": "^0.23.2",
     "tsup": "^8.5.1",

@@ -103,6 +103,7 @@ describe("routes helpers", () => {
   it("accepts string and template literals that start with /", () => {
     expect(routePathFromLiteral('"/users/:id"')).toBe("/users/:id");
     expect(routePathFromLiteral("`/health`")).toBe("/health");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal under test contains a substitution
     expect(routePathFromLiteral("`/x/${id}`")).toBeUndefined();
     expect(routePathFromLiteral('"users"')).toBeUndefined();
   });

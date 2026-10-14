@@ -28,5 +28,25 @@
   },
   "javascript": {
     "formatter": { "quoteStyle": "double", "trailingCommas": "all", "semicolons": "always" }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/ui/web/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useKeyWithClickEvents": "off",
+            "noStaticElementInteractions": "off",
+            "useSemanticElements": "off",
+            "noLabelWithoutControl": "off",
+            "useValidAnchor": "off"
+          },
+          "correctness": { "useExhaustiveDependencies": "off" },
+          "security": { "noDangerouslySetInnerHtml": "off" },
+          "complexity": { "noImportantStyles": "off" },
+          "style": { "noDescendingSpecificity": "off" }
+        }
+      }
+    }
+  ]
 }

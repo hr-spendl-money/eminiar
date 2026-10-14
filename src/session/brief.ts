@@ -18,7 +18,7 @@ export function renderProjectBrief(
   opts: { freshnessOnly?: boolean | undefined } = {},
 ): string {
   const lines: string[] = [];
-  const freshness = freshnessLine(ctx, db);
+  const freshness = freshnessLine(db);
   if (opts.freshnessOnly) return freshness ?? "";
 
   const overview = overviewParagraph(ctx);
@@ -35,7 +35,7 @@ export function renderProjectBrief(
   if (hot.length) lines.push(`Hot files (fan-in × churn): ${hot.map((r) => r.path).join(", ")}`);
 
   if (freshness) lines.push(freshness);
-  return fit(lines, budget);
+  return fitBudget(lines, budget);
 }
 
 function overviewParagraph(ctx: ProjectContext): string | undefined {
@@ -65,7 +65,7 @@ function firstLine(s: string, max: number): string {
 }
 
 /** One line on index state; cheap (mtime/size compare, hashing only for changed files). */
-function freshnessLine(ctx: ProjectContext, db: StorageAdapter): string | undefined {
+function freshnessLine(db: StorageAdapter): string | undefined {
   const indexed = db.fileIndexSummary();
   const total = Object.values(indexed.byStatus).reduce((a, b) => a + b, 0);
   if (!total) return "Code graph: not built yet (em_architecture or em_reindex builds it).";
@@ -80,7 +80,7 @@ function freshnessLine(ctx: ProjectContext, db: StorageAdapter): string | undefi
   return `${parts.join("; ")}.`;
 }
 
-function fit(lines: string[], budget: number): string {
+function fitBudget(lines: string[], budget: number): string {
   let out = lines.join("\n");
   while (out.length > budget && lines.length > 1) {
     // drop the least important line first: hot files, then decisions, then the overview

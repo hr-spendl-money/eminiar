@@ -7,13 +7,16 @@ import { coupled, dependencies, hotspots, impact, neighbors, orphans } from "../
 import { fullDoctor } from "../install/doctor.js";
 import {
   gitignoreHint,
+  isStatus,
   list,
   MEMORY_KINDS,
+  MEMORY_STATUSES,
   memoriesDir,
   read,
   reconcile,
   remove,
   rename,
+  setMeta,
   write,
 } from "../memory/store.js";
 import { paths } from "../paths.js";
@@ -23,7 +26,7 @@ import { globalDb } from "../stats/global.js";
 import { summarize } from "../stats/record.js";
 import { getStorage } from "../storage/index.js";
 import { SqliteAdapter } from "../storage/sqlite/adapter.js";
-import type { GraphEdgeRow, GraphNodeRow, StatRow } from "../storage/types.js";
+import type { GraphEdgeRow, GraphNodeRow, MemoryStatus, StatRow } from "../storage/types.js";
 import { emIndex } from "../tools/em_index.js";
 import { emPurge } from "../tools/em_purge.js";
 import type { ToolResult } from "../tools/types.js";
@@ -163,15 +166,22 @@ export const memoryKinds = [...MEMORY_KINDS];
 
 export function memoriesPayload(
   ctx: ProjectContext,
-  opts: { kind?: string | undefined; topic?: string | undefined } = {},
+  opts: { kind?: string | undefined; topic?: string | undefined; status?: string | undefined } = {},
 ) {
   const db = getStorage(ctx);
   const summary = reconcile(ctx, db);
-  const rows = list(ctx, db, { kind: opts.kind, topic: opts.topic, limit: 1000 }).map((r) => ({
+  const rows = list(ctx, db, {
+    kind: opts.kind,
+    topic: opts.topic,
+    status: opts.status,
+    limit: 1000,
+  }).map((r) => ({
     id: r.id,
     name: r.name,
     topic: r.name?.includes("/") ? r.name.split("/")[0] : "",
     kind: r.kind,
+    status: r.status,
+    supersedes: r.supersedes,
     content: r.content,
     tags: r.tags ? (JSON.parse(r.tags) as string[]) : [],
     related: r.node_ids ? (JSON.parse(r.node_ids) as string[]) : [],
@@ -184,11 +194,19 @@ export function memoriesPayload(
   return {
     dir: ctx.config.memories.dir,
     kinds: memoryKinds,
+    statuses: [...MEMORY_STATUSES],
     topics,
     skipped: summary.skipped,
     gitignored: !!gitignoreHint(ctx),
     memories: rows,
   };
+}
+
+export function setMemoryStatus(ctx: ProjectContext, name: string, status: string) {
+  if (!isStatus(status)) throw new Error(`invalid status "${status}"`);
+  const db = getStorage(ctx);
+  if (!setMeta(ctx, db, name, { status })) throw new Error(`memory "${name}" does not exist`);
+  return { name, status };
 }
 
 export function memoryBody(ctx: ProjectContext, name: string) {
@@ -202,6 +220,14 @@ export interface MemoryWrite {
   name?: string | undefined;
   tags?: string[] | undefined;
   related?: string[] | undefined;
+  status?: string | undefined;
+  supersedes?: string | undefined;
+}
+
+function statusOf(s: string | undefined): MemoryStatus | undefined {
+  if (s === undefined || s === "") return undefined;
+  if (!isStatus(s)) throw new Error(`invalid status "${s}"`);
+  return s;
 }
 
 export function addMemory(ctx: ProjectContext, input: MemoryWrite) {
@@ -214,12 +240,14 @@ export function addMemory(ctx: ProjectContext, input: MemoryWrite) {
     tags: input.tags,
     related: input.related,
     sessionId: "dashboard",
+    status: statusOf(input.status),
+    supersedes: input.supersedes,
   });
   kickEmbedding(ctx, db);
-  return { id: r.row.id, name: r.name, path: r.path, created: r.created };
+  return { id: r.row.id, name: r.name, path: r.path, created: r.created, superseded: r.superseded };
 }
 
-/** Replace the whole memory (body, kind, tags, related); the created date is kept. */
+/** Replace the whole memory (body, kind, tags, related, status); the created date is kept. */
 export function updateMemory(ctx: ProjectContext, name: string, input: MemoryWrite) {
   const db = getStorage(ctx);
   const prev = read(ctx, db, name);
@@ -232,9 +260,12 @@ export function updateMemory(ctx: ProjectContext, name: string, input: MemoryWri
     related: input.related ?? prev.related,
     replace: true,
     sessionId: "dashboard",
+    status:
+      statusOf(input.status) ?? (prev.status && isStatus(prev.status) ? prev.status : undefined),
+    supersedes: input.supersedes ?? prev.supersedes,
   });
   kickEmbedding(ctx, db);
-  return { id: r.row.id, name: r.name, path: r.path };
+  return { id: r.row.id, name: r.name, path: r.path, superseded: r.superseded };
 }
 
 export function renameMemory(ctx: ProjectContext, from: string, to: string) {
@@ -480,6 +511,8 @@ export interface ActionInput {
   action: ActionName;
   scope?: string | undefined;
   full?: boolean | undefined;
+  /** reindex: only these files (code scope). */
+  paths?: string[] | undefined;
   path?: string | undefined;
   glob?: string[] | undefined;
   source?: string | undefined;
@@ -505,7 +538,8 @@ export async function runAction(
     case "reindex": {
       const { emReindex } = await import("../tools/em_graph.js");
       const scope = (input.scope ?? "all") as "all";
-      const r = await emReindex.handler({ scope, full: !!input.full }, ctx);
+      const paths = input.paths?.length ? input.paths.map(String).filter(Boolean) : undefined;
+      const r = await emReindex.handler({ scope, full: !!input.full, paths }, ctx);
       return done(!r.isError, toolText(r));
     }
     case "embed": {
