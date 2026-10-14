@@ -53,6 +53,13 @@ export function App(): JSX.Element {
   const route = useRoute();
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [tick, setTick] = useState(0);
+  // The selected project root lives in the api module (every request carries it); mirror it
+  // in state so a change re-renders the shell and remounts the view below (`key={root}`).
+  const [root, setRootState] = useState(getRoot);
+  const changeRoot = (r: string) => {
+    setRoot(r);
+    setRootState(r);
+  };
   const projects = useAsync(
     () =>
       api<{ current: string; projects: Array<{ id: string; root: string | null }> }>(
@@ -60,9 +67,9 @@ export function App(): JSX.Element {
       ),
     [tick],
   );
-  const status = useAsync(() => api<Status>("/api/status"), [route.view, tick]);
+  const status = useAsync(() => api<Status>("/api/status"), [route.view, tick, root]);
   useEffect(() => {
-    if (projects.data && !getRoot()) setRoot(projects.data.current);
+    if (projects.data && !getRoot()) changeRoot(projects.data.current);
   }, [projects.data]);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 45_000);
@@ -122,12 +129,11 @@ export function App(): JSX.Element {
         </button>
         <select
           class="project"
-          title={getRoot()}
-          value={getRoot()}
+          title={root}
+          value={root}
           onChange={(e) => {
-            setRoot((e.target as HTMLSelectElement).value);
+            changeRoot((e.target as HTMLSelectElement).value);
             setTick((x) => x + 1);
-            navigate(view);
           }}
         >
           {roots.map((r) => (
@@ -135,7 +141,7 @@ export function App(): JSX.Element {
           ))}
         </select>
       </header>
-      <main class={cls("work", FILL.has(view) && "fill")}>
+      <main class={cls("work", FILL.has(view) && "fill")} key={root}>
         {view === "overview" && <Overview />}
         {view === "explore" && <Explore params={route.params} />}
         {view === "galaxy" && <Galaxy params={route.params} />}
@@ -170,7 +176,7 @@ export function App(): JSX.Element {
           </>
         )}
         <span class="spacer" />
-        <span class="ellipsis">{getRoot()}</span>
+        <span class="ellipsis">{root}</span>
       </footer>
       <ToastHost />
     </>

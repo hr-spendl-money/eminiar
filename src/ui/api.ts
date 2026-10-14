@@ -9,7 +9,8 @@ import {
   type Pick,
   removeDocSource,
 } from "../docs/add.js";
-import { type CatalogEntry, mergedCatalog } from "../docs/catalog.js";
+import { type CatalogEntry, catalogForProvider, mergedCatalog } from "../docs/catalog.js";
+import { docCategory } from "../docs/category.js";
 import { type DiscoverOptions, discoverDocs } from "../docs/discover.js";
 import { DOCS_PREFIX, docsTag, manifestPath, readManifest, syncState } from "../docs/manifest.js";
 import { resolveProvider } from "../docs/resolve.js";
@@ -307,10 +308,12 @@ export function docsPayload(ctx: ProjectContext) {
   const db = getStorage(ctx);
   const m = readManifest(ctx);
   const stats = new Map(db.documentSourceStats(DOCS_PREFIX).map((s) => [s.source, s]));
+  const catalog = mergedCatalog(ctx.config.docs.catalog as CatalogEntry[]);
   const sources = m.sources.map((s) => {
     const st = stats.get(docsTag(s.name));
     return {
       ...s,
+      category: docCategory(s, s.provider ? catalogForProvider(s.provider, catalog) : undefined),
       documents: st?.documents ?? 0,
       chunks: st?.chunks ?? 0,
       latest: st?.latest ?? null,
@@ -329,7 +332,7 @@ export function docsPayload(ctx: ProjectContext) {
       documents: sources.reduce((n, s) => n + s.documents, 0),
       chunks: sources.reduce((n, s) => n + s.chunks, 0),
     },
-    catalog: mergedCatalog(ctx.config.docs.catalog as CatalogEntry[]).length,
+    catalog: catalog.length,
     config: { ttlHours: ctx.config.docs.ttlHours, crawl: ctx.config.docs.crawl },
   };
 }

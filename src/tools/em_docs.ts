@@ -8,6 +8,8 @@ import {
   type Pick,
   removeDocSource,
 } from "../docs/add.js";
+import { type CatalogEntry, catalogForProvider, mergedCatalog } from "../docs/catalog.js";
+import { categoryInfo, categoryRank, docCategory, GROUP_LABELS } from "../docs/category.js";
 import { type Discovery, discoverDocs } from "../docs/discover.js";
 import { DOCS_PREFIX, docsTag, manifestPath, readManifest, syncState } from "../docs/manifest.js";
 import { resolveProvider } from "../docs/resolve.js";
@@ -261,7 +263,31 @@ export const emDocs = defineTool({
               `no documentation sources registered (${manifestPath(ctx)}). em_docs {action:"discover"} finds local docs and the libraries, services and APIs this project uses.`,
             );
           const stats = new Map(db.documentSourceStats(DOCS_PREFIX).map((s) => [s.source, s]));
-          const lines = m.sources.map((s) => {
+          const catalog = mergedCatalog(ctx.config.docs.catalog as CatalogEntry[]);
+          const categorised = m.sources
+            .map((s) => ({
+              s,
+              cat: docCategory(s, s.provider ? catalogForProvider(s.provider, catalog) : undefined),
+            }))
+            .sort(
+              (a, b) =>
+                categoryRank(a.cat) - categoryRank(b.cat) || a.s.name.localeCompare(b.s.name),
+            );
+          const lines: string[] = [];
+          let lastGroup = "";
+          let lastCat = "";
+          for (const { s, cat } of categorised) {
+            const info = categoryInfo(cat);
+            if (info.group !== lastGroup) {
+              if (lines.length) lines.push("");
+              lines.push(`# ${GROUP_LABELS[info.group]}`);
+              lastGroup = info.group;
+              lastCat = "";
+            }
+            if (cat !== lastCat) {
+              lines.push(`## ${info.label}`);
+              lastCat = cat;
+            }
             const st = stats.get(docsTag(s.name));
             const sync = syncState(db, s.name);
             const where =
@@ -271,8 +297,10 @@ export const emDocs = defineTool({
             const state = sync
               ? `synced ${ago(sync.at)}${sync.errors.length ? ` · ${sync.errors.length} error(s)` : ""}`
               : "never synced";
-            return `- ${s.name} [${s.kind}]${s.provider ? ` ← ${s.provider}` : ""} · ${st?.documents ?? 0} doc(s) · ${st?.chunks ?? 0} chunks · ${state} · ${where}`;
-          });
+            lines.push(
+              `- ${s.name} [${s.kind}]${s.provider ? ` ← ${s.provider}` : ""}${s.tags?.length ? ` (${s.tags.join(", ")})` : ""} · ${st?.documents ?? 0} doc(s) · ${st?.chunks ?? 0} chunks · ${state} · ${where}`,
+            );
+          }
           lines.push(
             "",
             `${m.sources.length} source(s); em_docs {action:"lookup", query} searches them all, {action:"sync"} refreshes.`,
