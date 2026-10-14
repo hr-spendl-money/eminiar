@@ -52,6 +52,18 @@ import {
   symbolPayload,
   treePayload,
 } from "./graph-api.js";
+import {
+  historyBranchPayload,
+  historyCommitPayload,
+  historyCommitsPayload,
+  historyDiffPayload,
+  historyFilePayload,
+  historyFilesPayload,
+  historyGraphPayload,
+  historyPayload,
+  historyRiskPayload,
+  historySymbolPayload,
+} from "./history-api.js";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -415,6 +427,74 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
       if (p === "/api/coverage") return json(res, 200, coveragePayload(ctx()));
       if (p === "/api/changes") return json(res, 200, changesPayload(ctx(), str("ref")));
       if (p === "/api/runs") return json(res, 200, runsPayload(ctx()));
+
+      // --- history -----------------------------------------------------------------
+      if (p === "/api/history")
+        return json(res, 200, historyPayload(ctx(), { refresh: q.get("refresh") === "1" }));
+      if (p === "/api/history/commits") {
+        const when = (k: string) => {
+          const v = str(k);
+          if (!v) return undefined;
+          const t = Date.parse(v);
+          return Number.isNaN(t) ? undefined : t;
+        };
+        return json(
+          res,
+          200,
+          historyCommitsPayload(ctx(), {
+            kinds: strList(q.get("kinds")) as never,
+            buckets: strList(q.get("buckets")) as never,
+            author: str("author"),
+            path: str("path"),
+            query: str("q"),
+            since: when("since"),
+            until: when("until"),
+            onHead: q.get("head") === "1",
+            risky: q.get("risky") === "1",
+            limit: num("limit", 200),
+            offset: num("offset", 0),
+          }),
+        );
+      }
+      if (p === "/api/history/commit") {
+        const sha = str("sha");
+        if (!sha) return json(res, 400, { error: "sha required" });
+        return json(res, 200, historyCommitPayload(ctx(), sha));
+      }
+      if (p === "/api/history/diff") {
+        const sha = str("sha");
+        if (!sha) return json(res, 400, { error: "sha required" });
+        return json(res, 200, historyDiffPayload(ctx(), sha, str("path")));
+      }
+      if (p === "/api/history/file") {
+        const path = str("path");
+        if (!path) return json(res, 400, { error: "path required" });
+        return json(res, 200, historyFilePayload(ctx(), path));
+      }
+      if (p === "/api/history/files")
+        return json(
+          res,
+          200,
+          historyFilesPayload(ctx(), {
+            limit: num("limit", 300),
+            prefix: str("path"),
+            sort: str("sort"),
+          }),
+        );
+      if (p === "/api/history/branch") {
+        const name = str("name");
+        if (!name) return json(res, 400, { error: "name required" });
+        return json(res, 200, historyBranchPayload(ctx(), name));
+      }
+      if (p === "/api/history/graph")
+        return json(res, 200, historyGraphPayload(ctx(), num("limit", 150)));
+      if (p === "/api/history/risk")
+        return json(res, 200, historyRiskPayload(ctx(), strList(q.get("paths"))));
+      if (p === "/api/history/symbol") {
+        const name = str("name");
+        if (!name) return json(res, 400, { error: "name required" });
+        return json(res, 200, historySymbolPayload(ctx(), name));
+      }
 
       // --- sessions, doctor, actions -----------------------------------------------
       if (p === "/api/events")

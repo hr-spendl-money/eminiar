@@ -7,6 +7,7 @@ import { emExecuteFile } from "./em_execute_file.js";
 import { emFetchAndIndex } from "./em_fetch_and_index.js";
 import { emGraphAdd, emGraphImpact, emGraphQuery, emReindex } from "./em_graph.js";
 import { emGraphChanges } from "./em_graph_changes.js";
+import { emHistory } from "./em_history.js";
 import { emIndex } from "./em_index.js";
 import { emIndexStatus } from "./em_index_status.js";
 import { emMemory } from "./em_memory.js";
@@ -35,6 +36,7 @@ export const tools: ToolDef<any>[] = [
   emGraphQuery,
   emGraphImpact,
   emGraphChanges,
+  emHistory,
   emGraphAdd,
   emReindex,
   emIndexStatus,

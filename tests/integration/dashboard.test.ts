@@ -164,6 +164,13 @@ describe("dashboard", () => {
       "/api/docs/discover",
     );
     expect(disc.local.find((c) => c.name === "docs")?.registered).toBe(true);
+    // history endpoints degrade gracefully outside a git repository
+    const hist = await j<{ git: boolean; error?: string }>("/api/history");
+    expect(hist.git).toBe(false);
+    expect(hist.error).toMatch(/not a git repository/);
+    expect((await get("/api/history/commit")).status).toBe(400);
+    expect((await j<{ git: boolean }>("/api/history/risk")).git).toBe(false);
+
     const dsearch = await j<{ hits: Array<{ source: string }> }>(
       "/api/search?q=dashboard&mode=lexical&source=docs:*",
     );

@@ -9,6 +9,7 @@ import { Coverage } from "./views/Coverage.js";
 import { Docs } from "./views/Docs.js";
 import { Explore } from "./views/Explore.js";
 import { Galaxy } from "./views/Galaxy.js";
+import { History } from "./views/History.js";
 import { Memory } from "./views/Memory.js";
 import { Overview } from "./views/Overview.js";
 import { Sessions } from "./views/Sessions.js";
@@ -19,6 +20,7 @@ const TABS: Array<[View, string]> = [
   ["explore", "Explore"],
   ["galaxy", "Galaxy"],
   ["architecture", "Architecture"],
+  ["history", "History"],
   ["memory", "Memory"],
   ["docs", "Docs"],
   ["coverage", "Coverage"],
@@ -146,6 +148,7 @@ export function App(): JSX.Element {
         {view === "explore" && <Explore params={route.params} />}
         {view === "galaxy" && <Galaxy params={route.params} />}
         {view === "architecture" && <Architecture params={route.params} />}
+        {view === "history" && <History params={route.params} />}
         {view === "memory" && <Memory params={route.params} />}
         {view === "docs" && <Docs params={route.params} />}
         {view === "coverage" && <Coverage />}

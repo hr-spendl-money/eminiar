@@ -23,6 +23,7 @@ export function routingGuidance(mode: string): string {
     '- em_search {queries, sort:"timeline"}: everything indexed plus session memory; em_recall {query} for past decisions, constraints and errors.',
     "- em_remember {content, kind, name?, status?}: record a decision/constraint/fact as a markdown memory under .eminiar/memories (survives compaction, shareable via git); em_memory {action: list|read|edit|rename|delete|status} manages them.",
     '- em_architecture {aspects?}: the project map (folders, entry points, routes, hotspots, decisions) in one call; em_symbols {name_path | mode:"overview", file} for a symbol or a file outline; em_graph_impact {node} before a refactor; em_graph_changes for what the current diff reaches; em_graph_query {pattern | preset} to walk the graph; em_index_status for coverage. em_stats shows savings.',
+    "- em_history {action: overview | file {path} | risk | commit {sha} | branch {name} | symbol {name_path} | search {query}}: the git history classified (feat/fix/refactor…), branches vs base, and each fix traced back to the commit that caused it — ask it before editing a file or committing instead of running git log/blame; commit messages are searchable via em_search (source git).",
     "Plain Bash/Read/Grep remain right for short fixed output and files you are about to edit.",
   ].join("\n");
 }

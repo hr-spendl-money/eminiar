@@ -1,6 +1,6 @@
 ---
 name: eminiar
-description: Use eminiar's em_* tools to keep large outputs out of the context window — run commands and scripts in the sandbox (em_execute, em_batch_execute, em_execute_file), search indexed knowledge and session memory (em_search, em_recall), and query the project graph (em_graph_impact). Triggers on any task that would read logs, test output, git history, dependency trees, API responses, large files, or documentation.
+description: Use eminiar's em_* tools to keep large outputs out of the context window — run commands and scripts in the sandbox (em_execute, em_batch_execute, em_execute_file), search indexed knowledge and session memory (em_search, em_recall), query the project graph (em_graph_impact) and the classified git history (em_history). Triggers on any task that would read logs, test output, git history, dependency trees, API responses, large files, or documentation.
 user-invocable: false
 ---
 
@@ -43,6 +43,13 @@ surfacing only the answer.
 - **Ask the graph.** `em_graph_query { pattern }` walks typed edges (`calls`, `imports`, `handles`,
   `extends` …) from a filter to a filter; presets cover `hotspots`, `routes`, `dead_code`, `cycles`,
   `clusters`, `coupled`, `orphans`.
+- **Learn from the history.** `em_history` reads git for you: `{action:"file", path}` before editing
+  a file tells you its fixes, the changes to it that later needed fixing and who knows it;
+  `{action:"risk"}` rates the files in the working tree before a commit; `{action:"commit", sha}`,
+  `{action:"branch", name}`, `{action:"symbol", name_path}` and `{action:"search", query}` answer
+  "what changed, why, and what broke afterwards" without `git log`. Treat a `⚠ later fixes` flag or
+  a file risk ≥ 0.3 as a reason to read those fixes and add a test for the behaviour they restored.
+  Commit messages are indexed (source `git`) for `em_search`. `/em-history` is the slash command.
 - **Trust, but check coverage.** `em_index_status` says whether the graph is behind HEAD or the
   working tree and which files were skipped. A clean result means no recorded gap, not proof of
   completeness; verify negative claims ("nothing calls X") against it.
