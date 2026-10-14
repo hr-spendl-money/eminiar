@@ -6,6 +6,16 @@ import { recordStat } from "../stats/record.js";
 import { getStorage } from "../storage/index.js";
 import { defineTool, errorResult, text } from "./types.js";
 
+/** `docs:*` selects every source with that prefix; anything else is an exact tag (or list). */
+export function sourceFilter(source: string | string[] | undefined): {
+  source?: string | string[] | undefined;
+  sourcePrefix?: string | undefined;
+} {
+  if (typeof source === "string" && source.endsWith("*"))
+    return { sourcePrefix: source.slice(0, -1) };
+  return { source };
+}
+
 export const emSearch = defineTool({
   name: "em_search",
   description:
@@ -15,7 +25,9 @@ export const emSearch = defineTool({
     source: z
       .union([z.string(), z.array(z.string())])
       .optional()
-      .describe("Restrict to a source tag (exec, batch, file, url, session, memory, code, …)"),
+      .describe(
+        "Restrict to a source tag (exec, batch, file, url, session, memory, code, docs:<name>, …); a trailing * matches a prefix (docs:* = all documentation sources)",
+      ),
     content_type: z.enum(["code", "prose", "json"]).optional(),
     sort: z.enum(["relevance", "timeline"]).optional(),
     mode: z
@@ -55,7 +67,7 @@ export const emSearch = defineTool({
             sort: args.sort ?? "relevance",
             vectorSearch,
             filters: {
-              source: args.source,
+              ...sourceFilter(args.source),
               contentType: contentTypeFilter(args.content_type),
               since: since && !Number.isNaN(since) ? since : undefined,
               documentIds: args.document_ids,

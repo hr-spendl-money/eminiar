@@ -108,6 +108,55 @@ export const ConfigSchema = z.object({
       dir: z.string().default(".eminiar/memories"),
     })
     .prefault({}),
+  docs: z
+    .object({
+      /** Project-relative manifest of documentation sources (`em_docs`); commit it. */
+      manifest: z.string().default(".eminiar/docs.json"),
+      /** How long fetched documentation pages stay cached before a sync refetches them. */
+      ttlHours: z
+        .number()
+        .positive()
+        .default(24 * 7),
+      crawl: z
+        .object({
+          /** Link depth followed from each seed URL (same origin, under the seed's path). */
+          depth: z.number().int().min(0).max(3).default(1),
+          maxPages: z.number().int().positive().max(200).default(25),
+        })
+        .prefault({}),
+      discover: z
+        .object({
+          /** Also propose documentation for devDependencies. */
+          includeDev: z.boolean().default(false),
+          /** Scan one level of sub-projects (multi-repo workspaces, monorepos). */
+          subprojects: z.boolean().default(true),
+        })
+        .prefault({}),
+      /** Extra catalogue entries: {id, title, urls, npm?, pypi?, go?, env?, image?, files?, crawl?}. */
+      catalog: z
+        .array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            urls: z.array(z.string()),
+            npm: z.array(z.string()).optional(),
+            pypi: z.array(z.string()).optional(),
+            go: z.array(z.string()).optional(),
+            env: z.array(z.string()).optional(),
+            image: z.array(z.string()).optional(),
+            files: z.array(z.string()).optional(),
+            tags: z.array(z.string()).optional(),
+            crawl: z
+              .object({
+                depth: z.number().int().min(0).max(3).optional(),
+                maxPages: z.number().int().positive().max(200).optional(),
+              })
+              .optional(),
+          }),
+        )
+        .default([]),
+    })
+    .prefault({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

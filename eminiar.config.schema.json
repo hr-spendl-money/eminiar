@@ -203,6 +203,136 @@
           "type": "string"
         }
       }
+    },
+    "docs": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "manifest": {
+          "default": ".eminiar/docs.json",
+          "type": "string"
+        },
+        "ttlHours": {
+          "default": 168,
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "crawl": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "depth": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            "maxPages": {
+              "default": 25,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          }
+        },
+        "discover": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "includeDev": {
+              "default": false,
+              "type": "boolean"
+            },
+            "subprojects": {
+              "default": true,
+              "type": "boolean"
+            }
+          }
+        },
+        "catalog": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "npm": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "pypi": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "go": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "image": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "crawl": {
+                "type": "object",
+                "properties": {
+                  "depth": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 3
+                  },
+                  "maxPages": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "urls"
+            ]
+          }
+        }
+      }
     }
   },
   "title": "eminiar.config.json",

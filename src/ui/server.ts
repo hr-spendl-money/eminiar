@@ -8,7 +8,15 @@ import {
   type ActionInput,
   addMemory,
   ctxFor,
+  type DocsAddBody,
   deleteMemory,
+  docsAddPayload,
+  docsDiscoverPayload,
+  docsPagesPayload,
+  docsPayload,
+  docsRemovePayload,
+  docsResolvePayload,
+  docsSyncPayload,
   doctorPayload,
   eventsPayload,
   graphMap,
@@ -258,6 +266,52 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
           200,
           memoriesPayload(ctx(), { kind: str("kind"), topic: str("topic"), status: str("status") }),
         );
+      }
+
+      // --- documentation -----------------------------------------------------------
+      if (p === "/api/docs") {
+        if (method === "POST") {
+          const body = await readJson<DocsAddBody & { names?: unknown }>(req);
+          try {
+            return json(
+              res,
+              200,
+              await docsAddPayload(ctx(), { ...body, names: strList(body.names) }),
+            );
+          } catch (err) {
+            return json(res, 400, { error: (err as Error).message });
+          }
+        }
+        if (method === "DELETE") {
+          const name = str("name");
+          if (!name) return json(res, 400, { error: "name required" });
+          return json(res, 200, docsRemovePayload(ctx(), name));
+        }
+        return json(res, 200, docsPayload(ctx()));
+      }
+      if (p === "/api/docs/pages") {
+        const name = str("name");
+        if (!name) return json(res, 400, { error: "name required" });
+        return json(res, 200, docsPagesPayload(ctx(), name, num("limit", 200)));
+      }
+      if (p === "/api/docs/discover")
+        return json(
+          res,
+          200,
+          docsDiscoverPayload(ctx(), {
+            includeDev: q.get("dev") === "1",
+            subprojects: q.get("subprojects") !== "0",
+          }),
+        );
+      if (p === "/api/docs/sync") {
+        if (method !== "POST") return json(res, 405, { error: "POST only" });
+        const body = await readJson<{ names?: unknown; force?: boolean }>(req);
+        return json(res, 200, await docsSyncPayload(ctx(), strList(body.names), !!body.force));
+      }
+      if (p === "/api/docs/resolve") {
+        const provider = str("provider");
+        if (!provider) return json(res, 400, { error: "provider required" });
+        return json(res, 200, await docsResolvePayload(ctx(), provider));
       }
 
       // --- graph -------------------------------------------------------------------

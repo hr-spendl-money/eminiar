@@ -1,0 +1,299 @@
+import { z } from "zod";
+import {
+  type AddInput,
+  addDocSources,
+  addPicked,
+  formatAdd,
+  removeDocSource,
+} from "../docs/add.js";
+import { type Discovery, discoverDocs } from "../docs/discover.js";
+import { DOCS_PREFIX, docsTag, manifestPath, readManifest, syncState } from "../docs/manifest.js";
+import { resolveProvider } from "../docs/resolve.js";
+import { formatSync, syncSources } from "../docs/sync.js";
+import { vectorRanker } from "../embeddings/queue.js";
+import { formatResults } from "../search/format.js";
+import { type SearchResponse, search } from "../search/pipeline.js";
+import { recordStat } from "../stats/record.js";
+import { getStorage } from "../storage/index.js";
+import { defineTool, errorResult, text } from "./types.js";
+
+const sourceShape = {
+  name: z.string().optional(),
+  url: z.string().optional(),
+  urls: z.array(z.string()).optional(),
+  path: z.string().optional().describe("Project-relative file or directory"),
+  glob: z.array(z.string()).optional(),
+  provider: z
+    .string()
+    .optional()
+    .describe(
+      "npm:<pkg> | pypi:<pkg> | go:<module> | env:<PREFIX> | image:<name> | api:<host> | files:<kind>; resolved to URLs when none are given",
+    ),
+  title: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  notes: z.string().optional(),
+  crawl_depth: z.number().int().min(0).max(3).optional(),
+  max_pages: z.number().int().min(1).max(200).optional(),
+  ttl_hours: z.number().positive().optional(),
+};
+
+function toInput(a: z.infer<z.ZodObject<typeof sourceShape>>): AddInput {
+  return {
+    name: a.name,
+    url: a.url,
+    urls: a.urls,
+    path: a.path,
+    glob: a.glob,
+    provider: a.provider,
+    title: a.title,
+    tags: a.tags,
+    notes: a.notes,
+    crawl:
+      a.crawl_depth !== undefined || a.max_pages !== undefined
+        ? { depth: a.crawl_depth, maxPages: a.max_pages }
+        : undefined,
+    ttlHours: a.ttl_hours,
+  };
+}
+
+function kb(n: number): string {
+  return n >= 1024 * 1024
+    ? `${(n / 1024 / 1024).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+function ago(ts: number): string {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  if (s < 172800) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+export function formatDiscovery(d: Discovery, max = 40): string {
+  const lines: string[] = [];
+  lines.push(
+    `Documentation discovery for ${d.root}${d.projects.length > 1 ? ` (${d.projects.length} projects: ${d.projects.slice(0, 12).join(", ")}${d.projects.length > 12 ? ", …" : ""})` : ""}`,
+  );
+  const reg = (b: boolean) => (b ? "  (registered)" : "");
+  const local = d.local;
+  lines.push("", `Local docs (${local.length}):`);
+  for (const c of local.slice(0, max))
+    lines.push(
+      `- ${c.name} · ${c.path}${c.glob && c.glob.length <= 4 ? ` [${c.glob.join(", ")}]` : ""} · ${c.files} file(s) · ${kb(c.bytes)} — ${c.why}${reg(c.registered)}`,
+    );
+  if (local.length > max) lines.push(`  … ${local.length - max} more`);
+  const groups: Array<[string, string, string]> = [
+    ["catalog", "Libraries, services and infrastructure with known documentation", "URLs known"],
+    ["probe", "Third-party APIs called from code", "documentation site is probed at add"],
+    [
+      "registry",
+      "Packages without a catalogue entry",
+      "resolved through npm / PyPI / pkg.go.dev at add",
+    ],
+    ["unknown", "Env var prefixes and images nobody knows", "pass url to add"],
+  ];
+  for (const [conf, title, note] of groups) {
+    const list = d.providers.filter((p) => p.confidence === conf);
+    if (!list.length) continue;
+    lines.push("", `${title} (${list.length}; ${note}):`);
+    for (const p of list.slice(0, max)) {
+      const used =
+        p.usedBy.length > 1
+          ? ` · used by ${p.usedBy.length} projects`
+          : p.usedBy[0] && p.usedBy[0] !== "."
+            ? ` · ${p.usedBy[0]}`
+            : "";
+      const where = p.urls[0] ? ` · ${p.urls[0]}` : "";
+      const ev = conf === "probe" || conf === "unknown" ? ` · ${p.evidence[0]}` : "";
+      lines.push(`- ${p.name} ← ${p.provider}${used}${where}${ev}${reg(p.registered)}`);
+    }
+    if (list.length > max) lines.push(`  … ${list.length - max} more`);
+  }
+  const unreg =
+    d.local.filter((c) => !c.registered).length +
+    d.providers.filter((p) => !p.registered && p.confidence !== "unknown").length;
+  lines.push(
+    "",
+    unreg
+      ? `Next: em_docs {action:"add", pick:"recommended"} registers and indexes the local docs, catalogue providers and probed APIs above (${unreg} unregistered candidates); pick "all" adds registry packages too; names:[…] narrows. Unknown ones: em_docs {action:"add", name, url}.`
+      : 'Everything found is already registered. em_docs {action:"sync"} refreshes; em_docs {action:"lookup", query} answers from the index.',
+  );
+  return lines.join("\n");
+}
+
+export const emDocs = defineTool({
+  name: "em_docs",
+  description:
+    "The project's documentation knowledge base (manifest .eminiar/docs.json, committed). `discover` scans the project for local docs, specs and instructions plus the third-party libraries, services, infrastructure and APIs it calls, and maps them to their documentation. `add` registers sources (by url, path, provider or a discovery `pick`) and crawls/indexes them under `docs:<name>`; `sync` refreshes; `lookup` answers a question from the indexed documentation — use it before WebFetch/WebSearch for anything the project depends on. `list`, `remove`, `resolve` manage the set.",
+  schema: {
+    action: z.enum(["discover", "add", "remove", "list", "sync", "lookup", "resolve"]),
+    ...sourceShape,
+    names: z
+      .array(z.string())
+      .optional()
+      .describe("sync/remove: which sources; add with pick: which candidates"),
+    sources: z.array(z.object(sourceShape)).optional().describe("add: several sources at once"),
+    pick: z
+      .enum(["recommended", "local", "catalog", "api", "registry", "all"])
+      .optional()
+      .describe(
+        "add: take candidates from a fresh discovery — recommended = local docs + catalogue providers + APIs found in code",
+      ),
+    sync: z.boolean().optional().describe("add: index right away (default true)"),
+    force: z.boolean().optional().describe("sync: refetch ignoring the cache and drop stale pages"),
+    include_dev: z.boolean().optional().describe("discover: also devDependencies"),
+    subprojects: z
+      .boolean()
+      .optional()
+      .describe("discover: scan one level of sub-projects (default from config)"),
+    query: z.string().optional(),
+    queries: z.array(z.string()).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    max_tokens: z.number().int().min(100).max(20_000).optional(),
+  },
+  handler: async (args, ctx) => {
+    const started = Date.now();
+    const db = getStorage(ctx);
+    const done = (out: string) => {
+      recordStat(ctx, "em_docs", {
+        rawChars: out.length,
+        returnedChars: out.length,
+        durationMs: Date.now() - started,
+      });
+      return text(out);
+    };
+    try {
+      switch (args.action) {
+        case "discover": {
+          const d = discoverDocs(ctx, {
+            includeDev: args.include_dev,
+            subprojects: args.subprojects,
+          });
+          const out = formatDiscovery(d);
+          const raw = JSON.stringify(d).length;
+          recordStat(ctx, "em_docs", {
+            rawChars: raw,
+            returnedChars: out.length,
+            durationMs: Date.now() - started,
+          });
+          return text(out);
+        }
+        case "add": {
+          if (args.pick) {
+            const o = await addPicked(ctx, db, args.pick, {
+              names: args.names,
+              includeDev: args.include_dev,
+              subprojects: args.subprojects,
+              sync: args.sync,
+              force: args.force,
+            });
+            return done(formatAdd(o));
+          }
+          const inputs: AddInput[] = [];
+          if (args.sources?.length) inputs.push(...args.sources.map(toInput));
+          if (args.url || args.urls?.length || args.path || args.provider)
+            inputs.push(toInput(args));
+          if (!inputs.length)
+            return errorResult("add needs url/urls, path, provider, sources[] or pick");
+          const o = await addDocSources(ctx, db, inputs, { sync: args.sync, force: args.force });
+          return done(formatAdd(o));
+        }
+        case "remove": {
+          const names = [...(args.name ? [args.name] : []), ...(args.names ?? [])];
+          if (!names.length) return errorResult("remove needs `name` or `names`");
+          const lines = names.map((n) => {
+            const r = removeDocSource(ctx, db, n);
+            return r.removed
+              ? `removed ${n} (${r.documents} document(s) dropped)`
+              : `${n}: not registered${r.documents ? ` (${r.documents} orphan document(s) dropped)` : ""}`;
+          });
+          return done(lines.join("\n"));
+        }
+        case "list": {
+          const m = readManifest(ctx);
+          if (!m.sources.length)
+            return done(
+              `no documentation sources registered (${manifestPath(ctx)}). em_docs {action:"discover"} finds local docs and the libraries, services and APIs this project uses.`,
+            );
+          const stats = new Map(db.documentSourceStats(DOCS_PREFIX).map((s) => [s.source, s]));
+          const lines = m.sources.map((s) => {
+            const st = stats.get(docsTag(s.name));
+            const sync = syncState(db, s.name);
+            const where =
+              s.kind === "url"
+                ? (s.urls ?? []).join(", ")
+                : `${s.path}${s.glob ? ` [${s.glob.length <= 3 ? s.glob.join(", ") : `${s.glob.length} globs`}]` : ""}`;
+            const state = sync
+              ? `synced ${ago(sync.at)}${sync.errors.length ? ` · ${sync.errors.length} error(s)` : ""}`
+              : "never synced";
+            return `- ${s.name} [${s.kind}]${s.provider ? ` ← ${s.provider}` : ""} · ${st?.documents ?? 0} doc(s) · ${st?.chunks ?? 0} chunks · ${state} · ${where}`;
+          });
+          lines.push(
+            "",
+            `${m.sources.length} source(s); em_docs {action:"lookup", query} searches them all, {action:"sync"} refreshes.`,
+          );
+          return done(lines.join("\n"));
+        }
+        case "sync": {
+          const names = [...(args.name ? [args.name] : []), ...(args.names ?? [])];
+          const r = await syncSources(ctx, db, names.length ? names : undefined, {
+            force: args.force,
+          });
+          return done(
+            r.length
+              ? formatSync(r)
+              : 'no documentation sources registered; run em_docs {action:"discover"} first',
+          );
+        }
+        case "resolve": {
+          if (!args.provider) return errorResult("resolve needs `provider`");
+          const r = await resolveProvider(args.provider);
+          return done(
+            r.urls.length
+              ? `${r.provider} → ${r.title}\n${r.urls.map((u) => `  ${u}`).join("\n")}\n(via ${r.via}${r.crawl ? `, crawl depth ${r.crawl.depth ?? 1}` : ""})`
+              : `${r.provider}: ${r.notes ?? "unresolved"}`,
+          );
+        }
+        case "lookup": {
+          const queries = [...(args.query ? [args.query] : []), ...(args.queries ?? [])];
+          if (!queries.length) return errorResult("lookup needs `query` or `queries`");
+          const m = readManifest(ctx);
+          if (!m.sources.length && !db.documentSourceStats(DOCS_PREFIX).length)
+            return done(
+              'no documentation indexed yet. em_docs {action:"discover"} then {action:"add", pick:"recommended"} builds the knowledge base.',
+            );
+          if (args.name && !m.sources.some((s) => s.name === args.name))
+            return errorResult(
+              `unknown documentation source "${args.name}"; em_docs {action:"list"} shows them`,
+            );
+          const vectorSearch = await vectorRanker(ctx, db);
+          const responses: SearchResponse[] = [];
+          let raw = 0;
+          for (const q of queries) {
+            const r = await search(db, q, {
+              limit: args.limit ?? ctx.config.search.defaultLimit,
+              vectorSearch,
+              filters: args.name ? { source: docsTag(args.name) } : { sourcePrefix: DOCS_PREFIX },
+            });
+            raw += r.hits.reduce((n, h) => n + h.chunk.body.length, 0);
+            responses.push(r);
+          }
+          const out = formatResults(
+            responses,
+            args.max_tokens ?? ctx.config.search.defaultMaxTokens,
+          );
+          recordStat(ctx, "em_docs", {
+            rawChars: raw,
+            returnedChars: out.length,
+            durationMs: Date.now() - started,
+          });
+          return text(out);
+        }
+      }
+    } catch (err) {
+      return errorResult((err as Error).message);
+    }
+    return errorResult(`unknown action ${String(args.action)}`);
+  },
+});

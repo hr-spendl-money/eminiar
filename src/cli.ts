@@ -20,6 +20,10 @@ Use
   search "<q>" [--source X] [--code] [--timeline] [--limit N] [--json]
   graph <impact|deps|dependents|neighbors|path|hotspots|coupled|orphans|stats> [node] [--to node] [--depth N]
   reindex [--scope code|git|docs|embeddings|all] [--full]
+  docs discover [--dev] [--no-subprojects]       Find local docs and the libraries, services and APIs the project uses
+  docs add [--pick recommended|local|catalog|api|registry|all] [--name N] [--url U ...] [--path P]
+           [--glob G ...] [--provider npm:x|pypi:x|go:x|env:X|image:x|api:host] [--depth N] [--max N] [--no-sync]
+  docs list | sync [name ...] [--force] | remove <name> | lookup "<q>" [--name N] | resolve <provider>
   stats [--lifetime]           Context savings
   recall ["<q>"]               Memories and session history
   purge <index|sessions|graph|memories|all> --yes
@@ -258,6 +262,62 @@ const commands: Record<string, Command> = {
     );
     console.log(text(r));
     return 0;
+  },
+
+  async docs(args) {
+    const { values, positionals } = parseArgs({
+      args,
+      options: {
+        dev: { type: "boolean" },
+        "no-subprojects": { type: "boolean" },
+        pick: { type: "string" },
+        name: { type: "string" },
+        url: { type: "string", multiple: true },
+        path: { type: "string" },
+        glob: { type: "string", multiple: true },
+        provider: { type: "string" },
+        depth: { type: "string" },
+        max: { type: "string" },
+        "no-sync": { type: "boolean" },
+        force: { type: "boolean" },
+        limit: { type: "string" },
+      },
+      allowPositionals: true,
+      strict: false,
+    });
+    const [sub = "list", ...rest] = positionals;
+    const actions = ["discover", "add", "remove", "list", "sync", "lookup", "resolve"] as const;
+    type Action = (typeof actions)[number];
+    if (!actions.includes(sub as Action)) {
+      console.error(`usage: eminiar docs <${actions.join("|")}> …`);
+      return 2;
+    }
+    const { emDocs } = await import("./tools/em_docs.js");
+    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    const num = (v: unknown) => (typeof v === "string" && v !== "" ? Number(v) : undefined);
+    const r = await emDocs.handler(
+      {
+        action: sub as Action,
+        include_dev: !!values.dev,
+        subprojects: values["no-subprojects"] ? false : undefined,
+        pick: str(values.pick) as "recommended" | undefined,
+        name: str(values.name) ?? (sub === "remove" || sub === "resolve" ? undefined : undefined),
+        names: sub === "sync" || sub === "remove" ? rest : undefined,
+        urls: values.url as string[] | undefined,
+        path: str(values.path),
+        glob: values.glob as string[] | undefined,
+        provider: str(values.provider) ?? (sub === "resolve" ? rest[0] : undefined),
+        crawl_depth: num(values.depth),
+        max_pages: num(values.max),
+        sync: values["no-sync"] ? false : undefined,
+        force: !!values.force,
+        query: sub === "lookup" ? rest.join(" ") || undefined : undefined,
+        limit: num(values.limit),
+      },
+      getContext(),
+    );
+    console.log(text(r));
+    return r.isError ? 1 : 0;
   },
 
   async stats(args) {

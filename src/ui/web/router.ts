@@ -6,6 +6,7 @@ export const VIEWS = [
   "galaxy",
   "architecture",
   "memory",
+  "docs",
   "coverage",
   "sessions",
   "system",
