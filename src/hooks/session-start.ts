@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getContext } from "../context.js";
 import { memoriesDir } from "../memory/store.js";
+import { renderProjectBrief } from "../session/brief.js";
 import { setCurrentSession } from "../session/current.js";
 import { renderGuide } from "../session/guide.js";
 import { getStorage } from "../storage/index.js";
@@ -18,8 +19,8 @@ export function routingGuidance(mode: string): string {
     "- em_execute_file {path, code}: process a large file; your code gets $EM_FILE and only what it prints returns.",
     "- em_fetch_and_index {url, queries}: docs and web pages, indexed with a 24h cache.",
     '- em_search {queries, sort:"timeline"}: everything indexed plus session memory; em_recall {query} for past decisions, constraints and errors.',
-    "- em_remember {content, kind, name?}: record a decision/constraint/fact as a markdown memory under .eminiar/memories (survives compaction, shareable via git); em_memory {action: list|read|edit|rename|delete} manages them.",
-    "- em_graph_impact {node}: dependents and co-changing files before a refactor. em_stats shows savings.",
+    "- em_remember {content, kind, name?, status?}: record a decision/constraint/fact as a markdown memory under .eminiar/memories (survives compaction, shareable via git); em_memory {action: list|read|edit|rename|delete|status} manages them.",
+    '- em_architecture {aspects?}: the project map (folders, entry points, routes, hotspots, decisions) in one call; em_symbols {name_path | mode:"overview", file} for a symbol or a file outline; em_graph_impact {node} before a refactor; em_graph_changes for what the current diff reaches; em_graph_query {pattern | preset} to walk the graph; em_index_status for coverage. em_stats shows savings.',
     "Plain Bash/Read/Grep remain right for short fixed output and files you are about to edit.",
   ].join("\n");
 }
@@ -67,6 +68,16 @@ export const sessionStart: HookHandler = (input) => {
     }
   }
   parts.push(routingGuidance(effectiveRoutingMode(ctx.config)));
+  // A fresh context gets the project brief; after a compaction the Session Guide has the
+  // room, so only the one-line index state is added.
+  try {
+    const brief = renderProjectBrief(ctx, db, 1500, {
+      freshnessOnly: input.source === "compact" || input.source === "resume",
+    });
+    if (brief) parts.push(brief);
+  } catch {
+    // the brief is optional
+  }
   try {
     const onboarding = join(memoriesDir(ctx), "onboarding");
     if (!existsSync(onboarding) || !readdirSync(onboarding).some((f) => f.endsWith(".md")))

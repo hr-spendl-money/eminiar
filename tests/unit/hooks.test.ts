@@ -1,11 +1,11 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { classifyPrompt, classifyToolCall } from "../../src/capture/classify.js";
 import { getContext, resetContextCache } from "../../src/context.js";
 import { handlers } from "../../src/hooks/index.js";
-import { suggest } from "../../src/hooks/routing.js";
+import { literalOf, suggest } from "../../src/hooks/routing.js";
 import type { HookInput } from "../../src/hooks/types.js";
 import { search } from "../../src/search/pipeline.js";
 import { renderWithin } from "../../src/session/guide.js";
@@ -161,6 +161,122 @@ describe("hook handlers end to end", () => {
     );
     expect(resume?.hookSpecificOutput?.additionalContext).toContain("## Session Guide (eminiar)");
     expect(db.snapshotLatestUnconsumed("s1")).toBeUndefined();
+  });
+});
+
+describe("graph context in hooks", () => {
+  it("hints matching symbols for Grep, coverage gaps for Read, and briefs subagents", async () => {
+    const ctx = getContext(root);
+    const db = getStorage(ctx, { vectors: false });
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src/x.ts"), "export function parseThing() {}\n");
+    writeFileSync(join(root, "src/ok.ts"), "export const ok = 1;\n");
+    db.graphUpsertNodes([
+      {
+        id: "file:src/x.ts",
+        kind: "file",
+        name: "src/x.ts",
+        path: "src/x.ts",
+        source: "tree-sitter",
+      },
+      {
+        id: "sym:src/x.ts#parseThing",
+        kind: "function",
+        name: "parseThing",
+        path: "src/x.ts",
+        startLine: 7,
+        endLine: 9,
+        source: "tree-sitter",
+      },
+    ]);
+    db.fileIndexSet({
+      path: "src/x.ts",
+      hash: "h",
+      mtime: 0,
+      size: 1,
+      language: "typescript",
+      document_id: null,
+      status: "partial",
+      reason: "2 syntax errors recovered",
+    });
+    db.fileIndexSet({
+      path: "src/ok.ts",
+      hash: "h",
+      mtime: 0,
+      size: 1,
+      language: "typescript",
+      document_id: null,
+    });
+    db.metricsReplace([
+      {
+        node_id: "file:src/x.ts",
+        kind: "file",
+        path: "src/x.ts",
+        fan_in: 3,
+        fan_out: 0,
+        loc: 9,
+        complexity: 1,
+        commits_90d: 2,
+        score: 0.8,
+        cluster: 0,
+      },
+    ]);
+    expect(literalOf("parse\\w+Thing")).toBe("parse");
+    expect(literalOf("\\.ts$")).toBeUndefined();
+
+    const grep = await handlers.PreToolUse!(
+      base({
+        hook_event_name: "PreToolUse",
+        tool_name: "Grep",
+        tool_input: { pattern: "parseTh", output_mode: "files_with_matches" },
+      }),
+    );
+    expect(grep?.hookSpecificOutput?.permissionDecision).toBeUndefined();
+    expect(grep?.hookSpecificOutput?.additionalContext).toContain(
+      "function parseThing (src/x.ts:7)",
+    );
+    // a denied content grep still carries the hint in its reason
+    const denied = await handlers.PreToolUse!(
+      base({
+        hook_event_name: "PreToolUse",
+        tool_name: "Grep",
+        tool_input: { pattern: "parseThing", output_mode: "content" },
+      }),
+    );
+    expect(denied?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(denied?.hookSpecificOutput?.permissionDecisionReason).toContain("parseThing");
+
+    const read = await handlers.PreToolUse!(
+      base({
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: `${root}/src/x.ts` },
+      }),
+    );
+    expect(read?.hookSpecificOutput?.additionalContext).toContain("src/x.ts is partial");
+    const readOk = await handlers.PreToolUse!(
+      base({
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: `${root}/src/ok.ts` },
+      }),
+    );
+    expect(readOk).toBeUndefined();
+
+    const agent = await handlers.PreToolUse!(
+      base({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { prompt: "do y" } }),
+    );
+    const prompt = String(agent?.hookSpecificOutput?.updatedInput?.prompt);
+    expect(prompt).toMatch(/^Use the eminiar tools/);
+    expect(prompt).toContain("Project brief (eminiar)");
+    expect(prompt).toContain("Hot files (fan-in × churn): src/x.ts");
+    expect(prompt.endsWith("do y")).toBe(true);
+
+    const start = await handlers.SessionStart!(
+      base({ hook_event_name: "SessionStart", source: "startup" }),
+    );
+    expect(start?.hookSpecificOutput?.additionalContext).toContain("Code graph: 1 files indexed");
+    expect(start?.hookSpecificOutput?.additionalContext).toContain("1 with gaps");
   });
 });
 
