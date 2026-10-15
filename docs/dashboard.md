@@ -67,6 +67,12 @@ The interactive version of [`em_history`](knowledge-graph.md#git-history).
 Browse and edit `.eminiar/memories`. Shows decision status and `supersedes` links, and compiles
 a decision record.
 
+The **Graph** tab is a knowledge galaxy: memories (diamonds), the files they mention, the
+memories they link to, and hub nodes for tags (triangles) and topics (hexagons). Chips switch
+node and edge kinds off, a status filter and a "hide superseded" toggle narrow the decisions, and
+a hollow ring marks something referenced that no longer exists. Double-click a node, or use
+**Focus here**, to centre on it (`#/memory?tab=graph&focus=file:src/x.ts`).
+
 ### Docs
 
 ![Docs, Discover tab: local docs and catalogue providers found in the project](images/dashboard-docs-dark.webp)
@@ -74,6 +80,10 @@ a decision record.
 Documentation sources with their pages and sync state. Add a source by URL, path or provider. A
 discovery screen lists local docs, catalogue providers, APIs found in code, registry packages
 and unknown hosts (with a field for a URL). It also has a docs-only search.
+
+The **Graph** tab draws each source (squares) with the packages it documents, the code files
+its local pages name, its category, and the memories about its pages, with a category filter
+(`#/docs?tab=graph&focus=doc:zod`).
 
 ### Coverage
 

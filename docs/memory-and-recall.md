@@ -50,8 +50,9 @@ The dashboard **Memory** tab browses and edits the same files:
 Each memory file is:
 
 - **indexed** for hybrid search (`em_recall`, `em_search {source: "memory"}`);
-- **a graph node** (`memory:<name>`). Its `mentions` edges make `em_graph_impact` list the
-  memories to read before you change a file;
+- **a graph node** (`memory:<name>`). Its `mentions` edges (one per `related:` entry, with
+  `mem:x` resolved to `memory:x`) make `em_graph_impact` list the memories to read before you
+  change a file. `mem:<name>` references in the body become `links` edges between memories;
 - **listed in the session brief**, if it is an accepted decision, a constraint or a preference.
 
 ## Onboarding memories
