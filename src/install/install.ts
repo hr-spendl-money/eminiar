@@ -155,8 +155,7 @@ export function writeTeamFiles(root: string, marketplace?: string): void {
       cfg,
       `${JSON.stringify(
         {
-          $schema:
-            "https://raw.githubusercontent.com/ryandick/eminiar/main/eminiar.config.schema.json",
+          $schema: "https://raw.githubusercontent.com/rydn/eminiar/main/eminiar.config.schema.json",
           routing: { mode: "auto", deferToContextMode: true },
           graph: {
             exclude: [
