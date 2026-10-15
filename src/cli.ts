@@ -17,11 +17,13 @@ Setup
 
 Use
   index <path> [--source X] [--glob G ...]     Index files or a directory
-  search "<q>" [--source X] [--code] [--timeline] [--limit N] [--json]
-  graph <impact|deps|dependents|neighbors|path|hotspots|coupled|orphans|stats> [node] [--to node] [--depth N]
-  reindex [--scope code|git|docs|embeddings|all] [--full]
+  search "<q>" [--source X] [--code] [--timeline] [--lexical] [--limit N] [--json]
+  graph <impact|deps|dependents|neighbors|path> <node> [--to node] [--depth N]
+  graph <architecture|status|changes [ref]|find <q>|pattern '<json>'>
+  graph <hotspots|routes|dead_code|cycles|clusters|coupled|orphans|stats>
+  reindex [--scope code|git|metrics|docs|memories|embeddings|all] [--full]
   docs discover [--dev] [--no-subprojects]       Find local docs and the libraries, services and APIs the project uses
-  docs add [--pick recommended|local|catalog|api|registry|all] [--name N] [--url U ...] [--path P]
+  docs add [--pick recommended|local|service|infra|catalog|api|registry|all] [--name N] [--url U ...] [--path P]
            [--glob G ...] [--provider npm:x|pypi:x|go:x|env:X|image:x|api:host] [--depth N] [--max N] [--no-sync]
   docs list | sync [name ...] [--force] | remove <name> | lookup "<q>" [--name N] | resolve <provider>
   stats [--lifetime]           Context savings
