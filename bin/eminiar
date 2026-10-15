@@ -1,6 +1,16 @@
 #!/bin/sh
 # CLI shim. Node and package-root resolution live in _resolve.sh.
-. "$(dirname "$0")/_resolve.sh"
+# npm links this file into node_modules/.bin (npx, npm -g) as a symlink; follow it so
+# _resolve.sh and the package root are found next to the real file.
+EM_SELF="$0"
+while [ -L "$EM_SELF" ]; do
+  EM_LINK="$(readlink "$EM_SELF")"
+  case "$EM_LINK" in
+    /*) EM_SELF="$EM_LINK" ;;
+    *) EM_SELF="$(dirname "$EM_SELF")/$EM_LINK" ;;
+  esac
+done
+. "$(dirname "$EM_SELF")/_resolve.sh"
 if [ ! -x "$NODE" ]; then
   echo "eminiar: node >= 22.12 is required" >&2
   exit 1

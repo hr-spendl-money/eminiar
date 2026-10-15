@@ -9,7 +9,8 @@
 # dependencies beside it) in $EMINIAR_HOME/root-path; when the directory this shim
 # lives in cannot resolve its dependencies, we run the pinned copy's dist/ instead.
 EM_HOME="${EMINIAR_HOME:-$HOME/.eminiar}"
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# EM_SELF: the shim's real path when it was reached through a symlink (bin/eminiar).
+DIR="$(cd "$(dirname "${EM_SELF:-$0}")/.." && pwd)"
 
 # V8 compile cache (Node >= 22.1): bytecode for dist/*.js is reused across launches,
 # trimming server and hook start-up. Older Node ignores the variable.
