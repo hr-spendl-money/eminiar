@@ -162,7 +162,16 @@ beforeAll(async () => {
       'const img = "https://cdn.jsdelivr.net/npm/x";',
       'const DOCS = "https://docs.vendorx.io/reference/intro";',
       "// docs: https://docs.commented-out.io/guide",
+      'const input = h("input", { placeholder: "https://docs.example-only.io/guide/" });',
     ].join("\n"),
+  );
+  // a table of vendor links (a docs catalogue, a link list) is not evidence of using each vendor
+  writeFileSync(
+    join(root, "src/links.ts"),
+    `export const LINKS = [\n${Array.from(
+      { length: 20 },
+      (_, n) => `  "https://docs.listed${n}.io/guide",`,
+    ).join("\n")}\n];\n`,
   );
   // test fixtures and hidden worktree copies must not count as integrations
   mkdirSync(join(root, "src/__tests__"));
@@ -386,6 +395,8 @@ describe("discovery", () => {
     expect(prov["commented-out"]).toBeUndefined();
     expect(prov["testonly-pay"]).toBeUndefined();
     expect(prov["hidden-pay"]).toBeUndefined();
+    expect(d.providers.some((p) => p.provider.includes("docs.listed"))).toBe(false);
+    expect(prov["example-only"]).toBeUndefined();
     expect(prov.koa).toBeUndefined();
     // excluded hosts never surface
     expect(
