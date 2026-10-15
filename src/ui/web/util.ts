@@ -43,6 +43,9 @@ export const KIND_COLORS: Record<string, string> = {
   doc: "#1e40af",
   tag: "#9ca3af",
   topic: "#6b7280",
+  // History graph: branches and commits in slate greys (commits are drawn by kind).
+  branch: "#64748b",
+  commit: "#94a3b8",
   person: "#f59e0b",
   concept: "#0ea5e9",
   cluster: "#2563eb",

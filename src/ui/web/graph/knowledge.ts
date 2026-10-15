@@ -12,7 +12,8 @@ export interface KnowledgeNodeLike {
   id: string;
   label: string;
   kind: string;
-  group?: "memory" | "doc" | "hub" | "code" | undefined;
+  /** memory | doc | hub | code here; the history graph adds branch, commit and file. */
+  group?: string | undefined;
   seed?: boolean | undefined;
   root?: boolean | undefined;
   missing?: boolean | undefined;

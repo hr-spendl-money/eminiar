@@ -64,6 +64,7 @@ import {
   historyRiskPayload,
   historySymbolPayload,
 } from "./history-api.js";
+import { historyGraphKnowledgePayload } from "./history-graph-api.js";
 import { knowledgePayload, scopeOf as knowledgeScope } from "./knowledge-api.js";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -502,6 +503,18 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
       }
       if (p === "/api/history/graph")
         return json(res, 200, historyGraphPayload(ctx(), num("limit", 150)));
+      if (p === "/api/history/knowledge")
+        return json(
+          res,
+          200,
+          historyGraphKnowledgePayload(ctx(), {
+            focus: str("focus"),
+            branches: num("branches", 8),
+            commitsPerBranch: num("commits", 25),
+            filesPerCommit: num("files", 12),
+            limit: num("limit", 400),
+          }),
+        );
       if (p === "/api/history/risk")
         return json(res, 200, historyRiskPayload(ctx(), strList(q.get("paths"))));
       if (p === "/api/history/symbol") {

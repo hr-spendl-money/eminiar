@@ -2,24 +2,10 @@ import type { JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Bucket, FileHistoryUi, GraphCommitUi, WeekUi } from "../api.js";
 import { cls, day } from "../util.js";
+import { BUCKET_COLORS, BUCKET_ORDER, bucketColor } from "./colors.js";
 import { type LaneRow, laneSegments } from "./lanes.js";
 
-/**
- * Commit kinds, in a fixed order with fixed hues (validated for adjacent-pair CVD
- * separation; `other` is the neutral bucket). Legends and tags always carry the label
- * too, so identity never rests on colour alone.
- */
-export const BUCKET_ORDER: Bucket[] = ["feat", "test", "perf", "refactor", "fix", "docs", "other"];
-export const BUCKET_COLORS: Record<Bucket, string> = {
-  feat: "#2563eb",
-  test: "#16a34a",
-  perf: "#d97706",
-  refactor: "#7c3aed",
-  fix: "#e11d48",
-  docs: "#0284c7",
-  other: "#9ca3af",
-};
-export const bucketColor = (b: string): string => BUCKET_COLORS[b as Bucket] ?? BUCKET_COLORS.other;
+export { BUCKET_COLORS, BUCKET_ORDER, bucketColor };
 
 /** Sequential single-hue ramp for history risk (light → dark blue). */
 export function riskColor(r: number): string {

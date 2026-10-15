@@ -606,3 +606,43 @@ export interface KnowledgeUi {
   total: number;
   counts: { nodes: Record<string, number>; edges: Record<string, number> };
 }
+
+/** `/api/history/knowledge` (src/ui/history-graph-api.ts): branches → commits → files → knowledge. */
+export interface HistoryGraphNodeUi extends VisNode {
+  group: "branch" | "commit" | "file" | "memory" | "doc";
+  seed?: boolean;
+  missing?: boolean;
+  sub?: string;
+  bucket?: Bucket;
+  status?: string;
+  detail?: string;
+  at?: number;
+  author?: string;
+  short?: string;
+  risk?: number;
+  fixes?: number;
+  commits?: number;
+  merged?: boolean;
+  live?: boolean;
+  isDefault?: boolean;
+  prs?: number[];
+}
+export interface HistoryGraphBranchUi {
+  name: string;
+  commits: number;
+  tipAt: number;
+  merged: boolean;
+  live: boolean;
+  isDefault: boolean;
+}
+export interface HistoryKnowledgeUi {
+  git: boolean;
+  error?: string;
+  focus: string | null;
+  defaultBranch: string;
+  nodes: HistoryGraphNodeUi[];
+  edges: VisEdge[];
+  truncated: boolean;
+  total: number;
+  branches: HistoryGraphBranchUi[];
+}
