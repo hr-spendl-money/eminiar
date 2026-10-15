@@ -589,6 +589,13 @@ const DOC_HOST_SUFFIX =
 const DOC_PATH_RE =
   /^\/(docs?|documentation|developers?|guides?|learn|reference|manual|wiki|help|en|latest|stable|v\d+(\.\d+)*\/docs)(\/|$)/i;
 const COMMENT_RE = /^\s*(\/\/|#|\*|\/\*|<!--|--|;|'''|""")/;
+/** Example text shown in an input (`placeholder="https://..."`) is not a link the code follows. */
+const PLACEHOLDER_RE = /\bplaceholder\b/i;
+/**
+ * A source file naming this many distinct external hosts is a reference table (a docs
+ * catalogue, a link list, a CSP allow-list), not code that integrates with each of them.
+ */
+const REFERENCE_TABLE_HOSTS = 15;
 
 function isDocLink(host: string, path: string): boolean {
   return (
@@ -627,44 +634,47 @@ function apiSignals(
     const rel = relative(dir, file).split("\\").join("/");
     const isEnv = basename(file).startsWith(".env");
     const lines = text.split("\n");
+    const found: { host: string; path: string; line: string; i: number }[] = [];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
-      if (!line.includes("http")) continue;
-      const comment = COMMENT_RE.test(line);
+      if (!line.includes("http") || PLACEHOLDER_RE.test(line)) continue;
       for (const m of line.matchAll(URL_RE)) {
         const host = m[1]!.toLowerCase();
-        const path = m[2] ?? "/";
-        if (!isApiHostCandidate(host)) continue;
-        const spec = SPEC_URL_RE.test(path);
-        if (!spec && isDocLink(host, path)) {
-          if (comment && !isEnv) continue;
-          const link = docLinks.get(host) ?? { host, urls: [], samples: [], project };
-          const full = `https://${host}${path.replace(/[#?].*$/, "")}`;
-          if (!link.urls.includes(full) && link.urls.length < 3) link.urls.push(full);
-          if (link.samples.length < 3) link.samples.push(`${rel}:${i + 1}`);
-          docLinks.set(host, link);
-          continue;
-        }
-        const callLike =
-          !comment &&
-          (spec || isEnv || CALL_RE.test(line) || API_PATH_RE.test(path) || API_HOST_RE.test(host));
-        const cur = hits.get(host) ?? {
-          host,
-          calls: 0,
-          mentions: 0,
-          samples: [],
-          specUrls: [],
-          project,
-        };
-        if (callLike) cur.calls++;
-        else cur.mentions++;
-        if (callLike && cur.samples.length < 3) cur.samples.push(`${rel}:${i + 1}`);
-        if (spec) {
-          const full = `https://${host}${path}`;
-          if (!cur.specUrls.includes(full) && cur.specUrls.length < 4) cur.specUrls.push(full);
-        }
-        hits.set(host, cur);
+        if (isApiHostCandidate(host)) found.push({ host, path: m[2] ?? "/", line, i });
       }
+    }
+    if (new Set(found.map((f) => f.host)).size >= REFERENCE_TABLE_HOSTS) continue;
+    for (const { host, path, line, i } of found) {
+      const comment = COMMENT_RE.test(line);
+      const spec = SPEC_URL_RE.test(path);
+      if (!spec && isDocLink(host, path)) {
+        if (comment && !isEnv) continue;
+        const link = docLinks.get(host) ?? { host, urls: [], samples: [], project };
+        const full = `https://${host}${path.replace(/[#?].*$/, "")}`;
+        if (!link.urls.includes(full) && link.urls.length < 3) link.urls.push(full);
+        if (link.samples.length < 3) link.samples.push(`${rel}:${i + 1}`);
+        docLinks.set(host, link);
+        continue;
+      }
+      const callLike =
+        !comment &&
+        (spec || isEnv || CALL_RE.test(line) || API_PATH_RE.test(path) || API_HOST_RE.test(host));
+      const cur = hits.get(host) ?? {
+        host,
+        calls: 0,
+        mentions: 0,
+        samples: [],
+        specUrls: [],
+        project,
+      };
+      if (callLike) cur.calls++;
+      else cur.mentions++;
+      if (callLike && cur.samples.length < 3) cur.samples.push(`${rel}:${i + 1}`);
+      if (spec) {
+        const full = `https://${host}${path}`;
+        if (!cur.specUrls.includes(full) && cur.specUrls.length < 4) cur.specUrls.push(full);
+      }
+      hits.set(host, cur);
     }
   }
   return { hits, docLinks };
