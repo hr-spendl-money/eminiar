@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -85,6 +85,25 @@ describe("bin shims", () => {
     writeFileSync(join(dir, "dist", "hook.js"), 'process.stdout.write("SIBLING\\n")');
     const r = sh(dir, "em-hook", home({}));
     expect(r.stdout.trim()).toBe("SIBLING");
+  });
+
+  it("follow the node_modules/.bin symlink npx and npm -g create for the eminiar CLI", () => {
+    // npx cache layout: node_modules/.bin/eminiar -> ../eminiar/bin/eminiar, deps beside it.
+    const nm = join(mkdtempSync(join(tmpdir(), "em-shim-npx-")), "node_modules");
+    mkdirSync(join(nm, "better-sqlite3"), { recursive: true });
+    writeFileSync(join(nm, "better-sqlite3", "package.json"), "{}");
+    const dir = join(nm, "eminiar");
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    cpSync(binSrc, join(dir, "bin"), { recursive: true });
+    writeFileSync(join(dir, "dist", "cli.js"), 'process.stdout.write("NPX\\n")');
+    mkdirSync(join(nm, ".bin"));
+    symlinkSync("../eminiar/bin/eminiar", join(nm, ".bin", "eminiar"));
+    const r = spawnSync("sh", [join(nm, ".bin", "eminiar")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", EMINIAR_HOME: home({}) },
+    });
+    expect(r.stderr).toBe("");
+    expect(r.stdout.trim()).toBe("NPX");
   });
 
   it("never block Claude when nothing can run: em-hook prints {} and em-server exits 1", () => {

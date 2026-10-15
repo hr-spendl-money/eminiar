@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/sync-plugin-version.mjs --check
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      # The embedding-model test stays skipped (opt in with EMINIAR_TEST_EMBED=1).
+      - run: npm test

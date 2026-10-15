@@ -32,6 +32,9 @@ The installer does these steps in order:
 The installer asks before it changes your user-level Claude Code config. Add `--yes` to accept
 without a prompt. Add `--statusline` to also install the [status line](#status-line).
 
+The rest of the docs write commands as `eminiar <command>`. Run them as `npx eminiar <command>`,
+or install the CLI globally once with `npm install -g eminiar`.
+
 ### Verify
 
 ```sh

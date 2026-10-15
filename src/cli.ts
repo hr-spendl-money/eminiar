@@ -425,6 +425,12 @@ const commands: Record<string, Command> = {
 };
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
+// Commands parse with strict: false, so `--help` would otherwise be ignored and
+// `npx eminiar install --help` would start installing.
+if (cmd === "--help" || cmd === "-h" || rest.includes("--help")) {
+  console.log(USAGE);
+  process.exit(0);
+}
 const run = commands[cmd] ?? (cmd === "--version" || cmd === "-v" ? commands.version : undefined);
 if (!run) {
   console.error(`unknown command: ${cmd}\n`);
