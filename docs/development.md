@@ -64,6 +64,31 @@ npm run build && npm run bench    # drives dist/server.js over stdio, like Claud
 - Run the benchmark **alone**, not at the same time as tests.
 - Compare before and after: build `origin/main` and your branch, and run both.
 
+## Releasing
+
+The package is published to npm as [`eminiar`](https://www.npmjs.com/package/eminiar) by
+`.github/workflows/publish.yml`. Every push to `main` (a merged PR) publishes the version in
+`package.json` if npm does not have it yet, then tags it `v<version>` and creates a GitHub
+release with generated notes. A merge without a version bump publishes nothing.
+
+1. In the PR, bump the version:
+
+   ```sh
+   npm version patch --no-git-tag-version    # or minor / major
+   ```
+
+   The `version` script copies the new version into `.claude-plugin/plugin.json`. Claude Code
+   names its plugin cache directory after it, and CI fails if the two differ.
+2. Merge the PR. The workflow builds, typechecks, lints, tests, runs
+   `npm publish --provenance --access public`, and creates the tag and release.
+
+**One-time setup:** create a granular npm access token with publish rights for `eminiar` (it must
+bypass 2FA), and add it as the `NPM_TOKEN` repository secret (Settings → Secrets and variables →
+Actions). Without the secret the workflow skips publishing and logs a warning.
+
+To publish by hand instead: `npm login`, then `npm publish --access public` from a clean
+checkout. `prepack` runs the build. Check the tarball first with `npm pack --dry-run`.
+
 ## Screenshots
 
 The images in `docs/images` are captured from a live dashboard. Regenerate them after a UI

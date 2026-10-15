@@ -1,0 +1,82 @@
+name: Publish
+
+# Every push to main (a merged PR) publishes package.json's version to npm, unless
+# that version is already on the registry, so merges without a version bump do nothing.
+# A new version is then tagged v<version> with a GitHub release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write # tag and GitHub release
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Is this version already on npm?
+        id: version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A version (or package) that is not on the registry fails with E404; older
+          # npm releases print nothing and exit 0 instead. Any other error stops the job.
+          if out=$(npm view "eminiar@$version" version 2>&1); then
+            if [ "$out" = "$version" ]; then publish=false; else publish=true; fi
+          elif printf '%s' "$out" | grep -q E404; then
+            publish=true
+          else
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          if [ "$publish" = false ]; then
+            echo "eminiar@$version is already on npm; nothing to do"
+          elif [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::eminiar@$version is not on npm, but the NPM_TOKEN secret is not set; skipping publish"
+            publish=false
+          else
+            echo "eminiar@$version is new; publishing"
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm ci
+      - if: steps.version.outputs.publish == 'true'
+        run: node scripts/sync-plugin-version.mjs --check
+      - if: steps.version.outputs.publish == 'true'
+        run: npm run build
+      - if: steps.version.outputs.publish == 'true'
+        run: npm run typecheck
+      - if: steps.version.outputs.publish == 'true'
+        run: npm run lint
+      - if: steps.version.outputs.publish == 'true'
+        run: npm test
+
+      - name: npm publish
+        if: steps.version.outputs.publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Tag and GitHub release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes

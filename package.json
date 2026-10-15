@@ -4,12 +4,18 @@
   "description": "Local-first context, memory and knowledge-graph plugin for Claude Code. Sandboxed execution, FTS5 + vector search, session continuity, and a code graph — nothing leaves your machine.",
   "type": "module",
   "license": "MIT",
+  "author": "Ryan Dick",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rydn/eminiar"
+    "url": "git+https://github.com/rydn/eminiar.git"
+  },
+  "homepage": "https://github.com/rydn/eminiar#readme",
+  "bugs": {
+    "url": "https://github.com/rydn/eminiar/issues"
   },
   "keywords": [
     "claude-code",
+    "claude-code-plugin",
     "mcp",
     "context-window",
     "fts5",
@@ -21,19 +27,23 @@
   "engines": {
     "node": ">=22.12"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
-    "eminiar": "./bin/eminiar"
+    "eminiar": "bin/eminiar"
   },
   "files": [
     "dist",
+    "!dist/**/*.map",
     "bin",
     "hooks",
     "skills",
     ".claude-plugin",
     "vendor",
-    "queries",
     "eminiar.config.schema.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup && tsup --config tsup.web.config.ts && node scripts/copy-grammars.mjs && tsx scripts/gen-schema.ts",
@@ -46,6 +56,7 @@
     "lint:fix": "biome check --write .",
     "validate": "claude plugin validate .",
     "prepack": "npm run build",
+    "version": "node scripts/sync-plugin-version.mjs && git add .claude-plugin/plugin.json",
     "build:ui": "tsup --config tsup.web.config.ts",
     "dev:ui": "tsup --config tsup.web.config.ts --watch",
     "screenshots": "node scripts/capture-screenshots.mjs"
