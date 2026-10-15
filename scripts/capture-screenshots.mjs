@@ -57,6 +57,8 @@ const SHOTS = [
     schemes: ["dark"],
     actions: [click("Scan project")],
   },
+  { name: "memory-graph", hash: "#/memory?tab=graph", schemes: ["dark", "light"] },
+  { name: "docs-graph", hash: "#/docs?tab=graph", schemes: ["dark"] },
   { name: "coverage", hash: "#/coverage", schemes: ["dark"] },
 ].filter((s) => !only.length || only.includes(s.name));
 

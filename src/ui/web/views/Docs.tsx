@@ -21,6 +21,7 @@ import {
 import { Empty, ErrorBox, KV, Spinner, SubTabs, toast, useAsync } from "../components.js";
 import { navigate } from "../router.js";
 import { ago, cls, day, fmt } from "../util.js";
+import { KnowledgeGalaxy } from "./KnowledgeGalaxy.js";
 
 const KIND_COLORS: Record<string, string> = { url: "#2563eb", path: "#16a34a" };
 const CONF_COLORS: Record<string, string> = {
@@ -109,6 +110,14 @@ function SourceDetail({
           onClick={() => onSync(true)}
         >
           force
+        </button>
+        <button
+          type="button"
+          class="sm"
+          title="this source in the knowledge graph"
+          onClick={() => navigate("docs", { tab: "graph", focus: `doc:${s.name}` })}
+        >
+          graph
         </button>
         <button type="button" class="sm danger" disabled={!!busy} onClick={onRemove}>
           remove
@@ -984,6 +993,10 @@ export function Docs({ params }: { params: Record<string, string> }): JSX.Elemen
   const [tick, setTick] = useState(0);
   const list = useAsync(() => api<DocsList>("/api/docs"), [tick]);
   const onLog = (s: string) => setLog((l) => [...l, `[${new Date().toLocaleTimeString()}]\n${s}`]);
+  // A hash-only change (#/docs?tab=graph&focus=…) does not remount the view.
+  useEffect(() => {
+    if (params.tab) setTab(params.tab);
+  }, [params.tab]);
   return (
     <div class="page">
       <SubTabs
@@ -991,6 +1004,7 @@ export function Docs({ params }: { params: Record<string, string> }): JSX.Elemen
           ["sources", "Sources"],
           ["discover", "Discover"],
           ["search", "Search"],
+          ["graph", "Graph"],
         ]}
         value={tab}
         onChange={(t) => {
@@ -1001,6 +1015,7 @@ export function Docs({ params }: { params: Record<string, string> }): JSX.Elemen
       {tab === "sources" && <Sources params={params} onLog={onLog} key={tick} />}
       {tab === "discover" && <Discover onLog={onLog} onAdded={() => setTick((x) => x + 1)} />}
       {tab === "search" && <DocsSearch sources={(list.data?.sources ?? []).map((s) => s.name)} />}
+      {tab === "graph" && <KnowledgeGalaxy scope="docs" focus={params.focus} />}
       {log.length ? (
         <div class="card" style={{ marginTop: 12 }}>
           <h3>

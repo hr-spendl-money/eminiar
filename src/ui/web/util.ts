@@ -37,7 +37,12 @@ export const KIND_COLORS: Record<string, string> = {
   variable: "#64748b",
   route: "#e11d48",
   package: "#6b7280",
-  memory: "#db2777",
+  // Knowledge kinds stay on the grey/blue palette (accent, its darker and lighter
+  // steps, greys); the knowledge galaxy tells them apart by shape.
+  memory: "#2563eb",
+  doc: "#1e40af",
+  tag: "#9ca3af",
+  topic: "#6b7280",
   person: "#f59e0b",
   concept: "#0ea5e9",
   cluster: "#2563eb",
@@ -55,8 +60,13 @@ export const EDGE_COLORS: Record<string, string> = {
   defines: "#9ca3af",
   exports: "#9ca3af",
   co_changes: "#f59e0b",
-  mentions: "#db2777",
-  supersedes: "#db2777",
+  mentions: "#2563eb",
+  supersedes: "#6b7280",
+  links: "#3b82f6",
+  documents: "#1e40af",
+  about: "#93c5fd",
+  tagged: "#9ca3af",
+  in_topic: "#cdd2da",
   authored: "#d97706",
   link: "#2563eb",
 };
@@ -71,6 +81,9 @@ export const DIRECTED = new Set([
   "handles",
   "mentions",
   "supersedes",
+  "links",
+  "documents",
+  "about",
 ]);
 export const EDGE_KINDS = [
   "imports",

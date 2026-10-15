@@ -989,6 +989,31 @@ pre.json {
   margin-right: 4px;
   vertical-align: 3px;
 }
+svg.glyph {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -1px;
+  flex: none;
+}
+/* Knowledge galaxy: a graph sub-tab inside the Docs and Memories pages. */
+.kgalaxy {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 190px);
+  min-height: 460px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--card);
+}
+.kgalaxy .kbody {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+}
+.kgalaxy .kbody .panel {
+  min-height: 0;
+}
 .gwrap .hint {
   right: 10px;
   top: 10px;

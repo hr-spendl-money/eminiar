@@ -1,8 +1,17 @@
 import type { JSX, Ref } from "preact";
 import { useEffect, useImperativeHandle, useRef, useState } from "preact/hooks";
 import type { VisEdge, VisNode } from "../api.js";
-import { basename, cls, color, DIRECTED, edgeColor } from "../util.js";
+import { basename, cls, color, edgeColor } from "../util.js";
 import { hierarchy, type Layout, layout, type SimNode } from "./force.js";
+import { EdgeGlyph, Glyph } from "./Glyph.js";
+import {
+  defaultColorOf,
+  defaultEdgeStyleOf,
+  defaultShapeOf,
+  type EdgeStyle,
+  type NodeShape,
+  traceShape,
+} from "./style.js";
 
 export interface GraphHandle {
   fit: () => void;
@@ -21,7 +30,20 @@ export interface GraphCanvasProps {
   handle?: Ref<GraphHandle | null>;
   /** Keep previous positions when the node set grows (expand). */
   keepPositions?: boolean;
+  /** Fill colour per node (default: by kind). */
+  colorOf?: ((n: VisNode) => string) | undefined;
+  /** Outline per node (default: circle). */
+  shapeOf?: ((n: VisNode) => NodeShape) | undefined;
+  /** Stroke per edge (default: the code galaxy's colours and dashes). */
+  edgeStyleOf?: ((kind: string, weight: number) => EdgeStyle) | undefined;
+  /** Label text per node (default: file basename, last dotted segment otherwise). */
+  labelOf?: ((n: VisNode) => string) | undefined;
 }
+
+const defaultLabelOf = (d: VisNode): string =>
+  d.kind === "file" || d.kind === "package"
+    ? basename(d.label)
+    : (d.label.split(".").pop() ?? d.label);
 
 interface View {
   k: number;
@@ -71,6 +93,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const v = viewRef.current;
     const dark = prefersDark();
     const { selected, highlight } = propsRef.current;
+    const colorOf = propsRef.current.colorOf ?? defaultColorOf;
+    const shapeOf = propsRef.current.shapeOf ?? defaultShapeOf;
+    const edgeStyleOf = propsRef.current.edgeStyleOf ?? defaultEdgeStyleOf;
+    const labelOf = propsRef.current.labelOf ?? defaultLabelOf;
     const focus = selected ? l.byId.get(selected) : undefined;
     const near = new Set<string>();
     if (focus) {
@@ -95,24 +121,17 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       const hl = highlight?.has(key);
       const dim =
         focus && !(near.has(s.id) && near.has(t.id)) && s.id !== focus.id && t.id !== focus.id;
-      ctx.globalAlpha = hl ? 1 : dim ? 0.06 : e.kind === "co_changes" ? 0.35 : 0.45;
-      ctx.strokeStyle = edgeColor(e.kind);
-      ctx.lineWidth = (hl ? 2.5 : e.kind === "co_changes" ? 1 + e.weight * 2 : 1) / v.k;
-      ctx.setLineDash(
-        e.kind === "calls"
-          ? [4 / v.k, 3 / v.k]
-          : e.kind === "co_changes"
-            ? [1 / v.k, 3 / v.k]
-            : e.kind === "references"
-              ? [2 / v.k, 2 / v.k]
-              : [],
-      );
+      const st = edgeStyleOf(e.kind, e.weight);
+      ctx.globalAlpha = hl ? 1 : dim ? 0.06 : (st.alpha ?? 0.45);
+      ctx.strokeStyle = st.color;
+      ctx.lineWidth = (hl ? 2.5 : (st.width ?? 1)) / v.k;
+      ctx.setLineDash(st.dash ? st.dash.map((x) => x / v.k) : []);
       ctx.beginPath();
       ctx.moveTo(s.x, s.y ?? 0);
       ctx.lineTo(t.x, t.y ?? 0);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (DIRECTED.has(e.kind) && v.k > 0.5) {
+      if (st.directed && v.k > 0.5) {
         const dx = t.x - s.x;
         const dy = (t.y ?? 0) - (s.y ?? 0);
         const d = Math.hypot(dx, dy) || 1;
@@ -121,7 +140,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
         const ax = t.x - ux * (t.r + 2);
         const ay = (t.y ?? 0) - uy * (t.r + 2);
         const sz = 5 / v.k;
-        ctx.fillStyle = edgeColor(e.kind);
+        ctx.fillStyle = st.color;
         ctx.beginPath();
         ctx.moveTo(ax, ay);
         ctx.lineTo(ax - ux * sz * 2 - uy * sz, ay - uy * sz * 2 + ux * sz);
@@ -139,16 +158,23 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       if (d.x === undefined || d.y === undefined) continue;
       const dim = focus && !near.has(d.id);
       ctx.globalAlpha = dim ? 0.2 : 1;
-      ctx.beginPath();
-      ctx.arc(d.x, d.y, d.r / Math.max(1, v.k ** 0.5), 0, Math.PI * 2);
-      ctx.fillStyle = color(d.kind);
-      ctx.fill();
+      const shape = shapeOf(d);
+      const fill = colorOf(d);
+      traceShape(ctx, shape, d.x, d.y, d.r / Math.max(1, v.k ** 0.5));
+      if (shape === "ring") {
+        ctx.fillStyle = dark ? "#171a21" : "#ffffff";
+        ctx.fill();
+        ctx.lineWidth = 1.6 / v.k;
+        ctx.strokeStyle = fill;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = fill;
+        ctx.fill();
+      }
       if (d.root || d.id === selected || d === hoverRef.current) {
         ctx.lineWidth = 2.5 / v.k;
         ctx.strokeStyle = dark ? "#e5e7eb" : "#1b1f24";
         ctx.stroke();
-      } else if (d.kind === "file" && d.exported === false) {
-        // nothing
       }
       const label =
         showAll ||
@@ -158,10 +184,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
         d === hoverRef.current ||
         d.id === selected;
       if (label) {
-        const text =
-          d.kind === "file" || d.kind === "package"
-            ? basename(d.label)
-            : (d.label.split(".").pop() ?? d.label);
+        const text = labelOf(d);
         const x = d.x + d.r / Math.max(1, v.k ** 0.5) + 3 / v.k;
         ctx.lineWidth = 3 / v.k;
         ctx.strokeStyle = dark ? "#171a21" : "#ffffff";
@@ -202,7 +225,9 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
 
   // (re)build the layout when the node set changes
   const nodeKey = props.nodes.map((n) => n.id).join("|");
-  const edgeKey = props.edges.length;
+  // The edge set, not its size: a filter that swaps edges of one kind for as many of
+  // another must still re-lay the picture.
+  const edgeKey = props.edges.map((e) => `${e.src}|${e.dst}|${e.kind}`).join("\n");
   const mode = props.mode ?? "galaxy";
   useEffect(() => {
     const prev = props.keepPositions ? layoutRef.current?.byId : undefined;
@@ -233,10 +258,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     return () => l.sim.stop();
   }, [nodeKey, edgeKey, mode]);
 
-  // redraw on selection / highlight / theme changes
+  // redraw on selection / highlight / style / theme changes
   useEffect(() => {
     draw();
-  }, [props.selected, props.highlight, hover]);
+  }, [props.selected, props.highlight, hover, props.colorOf, props.shapeOf, props.edgeStyleOf]);
 
   // size the canvas to its box
   useEffect(() => {
@@ -408,18 +433,35 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       )}
       {props.legend !== false && (
         <div class="overlay legend">
-          {kinds.map((k) => (
-            <span>
-              <i style={{ background: color(k) }} />
-              {k}
-            </span>
-          ))}
-          {ekinds.map((k) => (
-            <span>
-              <s style={{ borderColor: edgeColor(k) }} />
-              {k}
-            </span>
-          ))}
+          {kinds.map((k) => {
+            const sample = props.nodes.find((n) => n.kind === k)!;
+            return (
+              <span>
+                {props.shapeOf || props.colorOf ? (
+                  <Glyph
+                    shape={(props.shapeOf ?? defaultShapeOf)(sample)}
+                    color={(props.colorOf ?? defaultColorOf)(sample)}
+                  />
+                ) : (
+                  <i style={{ background: color(k) }} />
+                )}
+                {k}
+              </span>
+            );
+          })}
+          {ekinds.map((k) => {
+            const st = props.edgeStyleOf?.(k, 1);
+            return (
+              <span>
+                {st ? (
+                  <EdgeGlyph color={st.color} dash={st.dash} />
+                ) : (
+                  <s style={{ borderColor: edgeColor(k) }} />
+                )}
+                {k}
+              </span>
+            );
+          })}
         </div>
       )}
       <button type="button" class="overlay fit" onClick={fitView}>
