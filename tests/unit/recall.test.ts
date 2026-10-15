@@ -74,6 +74,7 @@ beforeAll(() => {
   write(ctx, db, {
     name: "onboarding/structure",
     kind: "onboarding",
+    related: ["file:src/storage/pool.ts"],
     content:
       "Layout:\nsrc/storage holds the SQLite connection pool and the concurrent writers queue.",
   });
@@ -168,6 +169,9 @@ describe("file-linked memories", () => {
     const r = memoriesForFile(db, "src/storage/pool.ts");
     expect(r.text).toContain("decision/sqlite-connection-pool [decision]");
     expect(r.text).toContain("note/pool-symbol [note]");
+    // decisions before notes; onboarding is linked to everything, so it is left to the brief
+    expect(r.text.indexOf("decision/")).toBeLessThan(r.text.indexOf("note/"));
+    expect(r.text).not.toContain("onboarding/structure");
     expect(memoriesForFile(db, "src/plain.ts").text).toBe("");
   });
   it("annotates an Edit once per window, without denying, even with routing off", async () => {

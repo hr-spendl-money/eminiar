@@ -94,6 +94,9 @@ const warm = setTimeout(async () => {
     await reindexCode(ctx, db);
     try {
       reindexGitSignals(ctx, db);
+      // hooks read the persisted history summary; rebuild it when HEAD moved
+      const { refreshHistorySummary } = await import("./history/model.js");
+      refreshHistorySummary(ctx, db);
     } catch {
       // not a git repo
     }

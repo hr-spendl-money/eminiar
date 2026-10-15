@@ -220,6 +220,18 @@
           "default": true,
           "type": "boolean"
         },
+        "onCommit": {
+          "default": true,
+          "type": "boolean"
+        },
+        "onError": {
+          "default": true,
+          "type": "boolean"
+        },
+        "onWeb": {
+          "default": true,
+          "type": "boolean"
+        },
         "maxMemories": {
           "default": 3,
           "type": "integer",

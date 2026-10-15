@@ -8,7 +8,7 @@ import {
 } from "../capture/classify.js";
 import { getContext } from "../context.js";
 import { indexContent } from "../index/indexer.js";
-import { recallForText, recordShown } from "../session/recall.js";
+import { recallForError, recallForText, recordShown } from "../session/recall.js";
 import { globalDb } from "../stats/global.js";
 import type { StorageAdapter } from "../storage/adapter.js";
 import { getStorage } from "../storage/index.js";
@@ -136,9 +136,26 @@ export const postToolUse: HookHandler = (input) => {
   return undefined;
 };
 
-export const postToolUseFailure: HookHandler = (input) => {
+export const postToolUseFailure: HookHandler = async (input) => {
   if (!input.tool_name) return undefined;
   const { db, root, sessionId } = open(input);
+  // Look the error up before it is persisted, so it does not find itself.
+  let recalled: string | undefined;
+  const { recall } = getContext(input.cwd).config;
+  if (recall.onError && input.error) {
+    try {
+      const r = await recallForError(db, input.error, {
+        sessionId,
+        maxMemories: Math.min(2, recall.maxMemories),
+      });
+      if (r.text) {
+        recalled = r.text;
+        recordShown(db, sessionId, r.keys);
+      }
+    } catch {
+      // recall is best effort
+    }
+  }
   const drafts = classifyToolCall({
     toolName: input.tool_name,
     toolInput: input.tool_input ?? {},
@@ -146,7 +163,9 @@ export const postToolUseFailure: HookHandler = (input) => {
     root,
   }).filter((d) => d.category !== "tool_call");
   persist(db, sessionId, withPriority(sessionId, drafts));
-  return undefined;
+  return recalled
+    ? { hookSpecificOutput: { hookEventName: "PostToolUseFailure", additionalContext: recalled } }
+    : undefined;
 };
 
 export const subagentStop: HookHandler = (input) => {

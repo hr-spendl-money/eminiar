@@ -3,8 +3,15 @@ import { extname, join, relative, resolve } from "node:path";
 import type { ProjectContext } from "../context.js";
 import { getContext } from "../context.js";
 import { type DocSource, readManifestAt } from "../docs/manifest.js";
+import { git } from "../history/log.js";
 import { renderProjectBrief } from "../session/brief.js";
-import { memoriesForFile, recallForText, recordShown } from "../session/recall.js";
+import {
+  commitContext,
+  fileContext,
+  memoriesForFile,
+  recallForText,
+  recordShown,
+} from "../session/recall.js";
 import { serverAlive } from "../session/server-alive.js";
 import type { StorageAdapter } from "../storage/adapter.js";
 import { getStorage } from "../storage/index.js";
@@ -100,6 +107,11 @@ const BIG_TEXT_EXT = new Set([
   ".har",
 ]);
 
+/** A command with its heredoc bodies cut out: they are data, not commands to classify. */
+export function withoutHeredocs(cmd: string): string {
+  return cmd.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, "<<$2");
+}
+
 /** Decide whether a native tool call is better served by an em_* tool. */
 export function suggest(
   toolName: string,
@@ -108,8 +120,10 @@ export function suggest(
 ): Suggestion | undefined {
   switch (toolName) {
     case "Bash": {
-      const cmd = String(input.command ?? "");
+      const cmd = withoutHeredocs(String(input.command ?? ""));
       if (!cmd || TINY_BASH.test(cmd)) return undefined;
+      // `cat > file` / `cat >> file <<EOF` writes a file and prints nothing
+      if (/^\s*cat\b[^|\n]*>/.test(cmd) && !cmd.includes("|")) return undefined;
       if (HEAVY_BASH.test(cmd) || /\|\s*(head|tail|grep|wc|sort|uniq|jq|less)\b/.test(cmd)) {
         return {
           tool: "em_execute",
@@ -214,22 +228,91 @@ function graphContext(ctx: ProjectContext, input: HookInput): string | undefined
 }
 
 const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "Write"]);
+const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write"]);
 
 /**
- * Memories linked to the file about to be read or edited, once per context window.
- * Independent of the routing mode: switching routing off should not hide decisions.
+ * Before a file is read or edited: the memories linked to it; before an edit, also its fix
+ * history and fan-in. Each once per context window.
  */
-function fileMemoryContext(ctx: ProjectContext, input: HookInput): string | undefined {
+function fileKnowledge(ctx: ProjectContext, input: HookInput): string | undefined {
   if (!ctx.config.recall.onFile || !FILE_TOOLS.has(input.tool_name ?? "")) return undefined;
   try {
     const rel = projectRel(ctx, String(input.tool_input?.file_path ?? ""));
     if (!rel) return undefined;
     const db = getStorage(ctx, { vectors: false });
     const sessionId = input.session_id || undefined;
-    const r = memoriesForFile(db, rel, { sessionId });
+    const results = [memoriesForFile(db, rel, { sessionId })];
+    if (EDIT_TOOLS.has(input.tool_name ?? "")) results.push(fileContext(db, rel, { sessionId }));
+    const shown = results.filter((r) => r.text);
+    if (!shown.length) return undefined;
+    if (sessionId)
+      recordShown(
+        db,
+        sessionId,
+        shown.flatMap((r) => r.keys),
+      );
+    return shown.map((r) => r.text).join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Files a `git commit` command will include: the index, plus tracked changes with -a. */
+function commitFiles(root: string, cmd: string): string[] {
+  const list = (args: string[]) =>
+    git(root, args, { allowFail: true })
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+  const files = new Set(list(["diff", "--cached", "--name-only"]));
+  if (/\s(-[a-zA-Z]*a[a-zA-Z]*|--all)\b/.test(cmd))
+    for (const f of list(["diff", "--name-only"])) files.add(f);
+  return [...files];
+}
+
+/** Before `git commit`: the bug-prone and widely imported files it includes. */
+function commitKnowledge(ctx: ProjectContext, input: HookInput): string | undefined {
+  if (!ctx.config.recall.onCommit || input.tool_name !== "Bash") return undefined;
+  const cmd = withoutHeredocs(String(input.tool_input?.command ?? ""));
+  if (!/(^|[;&|]\s*)git\s+commit\b/.test(cmd)) return undefined;
+  try {
+    const db = getStorage(ctx, { vectors: false });
+    return commitContext(db, commitFiles(ctx.root, cmd)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Words of a URL worth searching for (`/docs/api/rate-limits` → `docs api rate limits`). */
+function urlWords(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.split(".").slice(0, -1).join(" ")} ${u.pathname.replace(/[/_\-.]+/g, " ")}`;
+  } catch {
+    return "";
+  }
+}
+
+/** Before WebSearch / WebFetch: the indexed doc pages that already answer it. */
+async function webKnowledge(ctx: ProjectContext, input: HookInput): Promise<string | undefined> {
+  if (!ctx.config.recall.onWeb) return undefined;
+  const ti = input.tool_input ?? {};
+  const text =
+    input.tool_name === "WebSearch"
+      ? String(ti.query ?? "")
+      : input.tool_name === "WebFetch"
+        ? `${String(ti.prompt ?? "")} ${urlWords(String(ti.url ?? ""))}`
+        : "";
+  if (!text.trim()) return undefined;
+  try {
+    const db = getStorage(ctx, { vectors: false });
+    const r = await recallForText(db, text, { maxMemories: 0, maxDocs: 3 });
     if (!r.text) return undefined;
-    if (sessionId) recordShown(db, sessionId, r.keys);
-    return r.text;
+    const pages = r.text.split("\n").filter((l) => l.startsWith("- docs:"));
+    return [
+      'eminiar docs: the local documentation index already has pages on this — try em_docs {action:"lookup", query} before the web:',
+      ...pages,
+    ].join("\n");
   } catch {
     return undefined;
   }
@@ -263,7 +346,13 @@ export const preToolUse: HookHandler = async (
 ): Promise<HookOutput | undefined> => {
   if (!input.tool_name || !input.tool_input) return undefined;
   const ctx = getContext(input.cwd);
-  const memo = fileMemoryContext(ctx, input);
+  // Project knowledge is pushed in every routing mode: switching routing off should not
+  // hide decisions, fix history or the docs that are already indexed.
+  const memo = joinHints(
+    fileKnowledge(ctx, input),
+    commitKnowledge(ctx, input),
+    await webKnowledge(ctx, input),
+  );
   const mode = effectiveRoutingMode(ctx.config);
   if (mode === "off") return withContext(undefined, memo);
   const coexisting = contextModeInstalled() && ctx.config.routing.deferToContextMode;

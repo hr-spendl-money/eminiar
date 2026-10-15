@@ -112,10 +112,19 @@ export const ConfigSchema = z.object({
     .object({
       /** Inject the memories and doc pages that match each prompt (UserPromptSubmit). */
       onPrompt: z.boolean().default(true),
-      /** Surface memories linked to a file when it is read or edited (PreToolUse). */
+      /**
+       * Before a file is read or edited: the memories linked to it; before an edit, also its
+       * fix history (bug-prone files) and fan-in (widely imported files).
+       */
       onFile: z.boolean().default(true),
       /** Brief subagents with the memories and doc pages that match their task. */
       onAgent: z.boolean().default(true),
+      /** Before `git commit`: the bug-prone and widely imported files it includes. */
+      onCommit: z.boolean().default(true),
+      /** After a failed tool call: earlier occurrences of the error and their resolutions. */
+      onError: z.boolean().default(true),
+      /** Before WebSearch / WebFetch: the indexed doc pages that already answer it. */
+      onWeb: z.boolean().default(true),
       maxMemories: z.number().int().min(0).max(10).default(3),
       maxDocs: z.number().int().min(0).max(10).default(2),
     })

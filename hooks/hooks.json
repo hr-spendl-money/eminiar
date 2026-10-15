@@ -37,12 +37,7 @@
     "PostToolUseFailure": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/em-hook\"",
-            "timeout": 5,
-            "async": true
-          }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/em-hook\"", "timeout": 5 }
         ]
       }
     ],

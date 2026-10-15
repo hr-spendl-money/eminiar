@@ -492,6 +492,7 @@ export function buildHistory(
 
   indexCommitMessages(db, model);
   writeBriefSummary(db, model);
+  writeFileRisk(db, model);
   return model;
 }
 
@@ -747,6 +748,68 @@ export function readBriefSummary(db: StorageAdapter): HistoryBrief | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** What a hook needs to warn about one file, persisted so hooks never run git log. */
+export interface FileRisk {
+  commits: number;
+  fixes: number;
+  /** Earlier changes to the file whose lines a later fix removed. */
+  bugOrigins: number;
+  risk: number;
+  reasons: string[];
+  /** Latest fix touching the file: `<short> <subject>`. */
+  lastFix?: string | undefined;
+}
+
+const FILE_RISK_LIMIT = 300;
+
+/** Files with a fix record, riskiest first, capped: the hooks' view of the history. */
+function writeFileRisk(db: StorageAdapter, m: HistoryModel): void {
+  const lastFix = new Map<string, string>();
+  for (const c of m.commits) {
+    if (c.kind !== "fix" || c.merge) continue;
+    for (const f of c.files)
+      if (!lastFix.has(f.path)) lastFix.set(f.path, `${c.short} ${c.subject.slice(0, 80)}`);
+  }
+  const files: Record<string, FileRisk> = {};
+  for (const f of [...m.files.values()]
+    .filter((f) => f.commits >= 2 && (f.fixes > 0 || f.bugOrigins > 0))
+    .sort((a, b) => b.risk - a.risk)
+    .slice(0, FILE_RISK_LIMIT)) {
+    files[f.path] = {
+      commits: f.commits,
+      fixes: f.fixes,
+      bugOrigins: f.bugOrigins,
+      risk: Math.round(f.risk * 100) / 100,
+      reasons: f.reasons.slice(0, 2),
+      lastFix: lastFix.get(f.path),
+    };
+  }
+  db.metaSet("history_files", JSON.stringify({ head: m.head, files }));
+}
+
+/** The persisted per-file risk table (empty until a history build has run). */
+export function readFileRisk(db: StorageAdapter): Record<string, FileRisk> {
+  const raw = db.metaGet("history_files");
+  if (!raw) return {};
+  try {
+    return (JSON.parse(raw) as { files?: Record<string, FileRisk> }).files ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Rebuild the history (and with it the brief and the file risk table) when HEAD moved
+ * since the last build. For the server warm-up, so hooks have current history without
+ * anyone calling em_history first; the fix-origin trace is budgeted to keep it short.
+ */
+export function refreshHistorySummary(ctx: ProjectContext, db: StorageAdapter): boolean {
+  const head = headSha(ctx.root);
+  if (!head) return false;
+  if (readBriefSummary(db)?.head === head && db.metaGet("history_files")) return false;
+  return !!getHistory(ctx, db, { traceBudget: 40 });
 }
 
 // --- queries used by the tool and the dashboard --------------------------------------

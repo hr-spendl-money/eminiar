@@ -17,7 +17,7 @@ export const KNOWLEDGE_GUIDANCE = [
   "Project knowledge (check before deciding, not after):",
   '- Before starting a task or changing a design: em_recall {query} for past decisions, constraints, rejected approaches and fixed errors on that topic; em_memory {action:"read", name} shows a whole memory.',
   '- For any library, framework, service or API the project uses: em_docs {action:"lookup", query} first; WebFetch/WebSearch only when the indexed docs do not answer it.',
-  '- Matching memories and doc pages are also attached to prompts ("eminiar recall") and to files you read or edit ("eminiar memory"): read and respect them, or update the memory when the change overrides it.',
+  '- eminiar also attaches this knowledge on its own; act on it rather than skimming past it: matching memories and doc pages on each prompt ("eminiar recall"), memories linked to a file you read or edit ("eminiar memory"), a file\'s fix record and importers before you edit it ("eminiar history" / "eminiar graph"), bug-prone files before a git commit, earlier occurrences of an error and how they were resolved after a failed call, and indexed doc pages before WebSearch/WebFetch ("eminiar docs"). Update a memory when your change overrides it.',
   "- When you settle something durable (a decision and why, a constraint, a gotcha): em_remember {content, kind, name?} so the next session starts knowing it.",
 ].join("\n");
 

@@ -15,11 +15,19 @@ The project remembers things so you do not have to rediscover or re-decide them.
   supersede it explicitly (`em_remember {kind: "decision", supersedes}`).
 - **Before WebFetch/WebSearch** for a library, framework, service or API the project uses,
   `em_docs {action: "lookup", query}`. Go to the web only when the indexed docs do not answer.
-- **Recall arrives on its own too.** Hooks attach matching memories and doc pages to each prompt
-  (`eminiar recall — …`) and the memories linked to a file when you read or edit it
-  (`eminiar memory: …`). Treat them as project rules: read the full memory with
-  `em_memory {action: "read", name}` when the gist is not enough, and update the memory when your
-  change overrides it.
+- **Recall arrives on its own too.** Treat these hook notes as project rules, not noise:
+  - `eminiar recall — …` on a prompt: memories and doc pages matching the request.
+  - `eminiar memory: …` before reading or editing a file: the memories linked to it. Read the
+    full memory with `em_memory {action: "read", name}` when the gist is not enough, and update
+    it when your change overrides it.
+  - `eminiar history: … is bug-prone` before an edit: read the fixes with
+    `em_history {action: "file", path}` and keep the behaviour they restored under test.
+  - `eminiar graph: … imported by N files` before an edit: `em_graph_impact` before changing an
+    exported signature.
+  - Before `git commit`: the bug-prone and widely imported files in the commit.
+  - After a failed call: `this error has been seen before` with what resolved it last time. Try
+    that first.
+  - `eminiar docs: …` before WebSearch/WebFetch: indexed pages that already answer it.
 - **When something durable is settled** (a decision and why, a constraint, a gotcha, a preference),
   `em_remember` it, with `related_files: ["<path>"]` when it is about specific files, so it is
   surfaced the next time those files are read or edited.
