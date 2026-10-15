@@ -165,7 +165,7 @@ export function architecture(
   const counts = db.graphCounts();
   const nodeCounts = db.graphNodeCounts();
   const symbols = Object.entries(nodeCounts)
-    .filter(([k]) => !["file", "package", "person", "concept", "memory"].includes(k))
+    .filter(([k]) => !["file", "package", "person", "concept", "memory", "doc"].includes(k))
     .reduce((a, [, n]) => a + n, 0);
   const out: Architecture = {
     project: {
