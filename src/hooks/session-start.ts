@@ -12,16 +12,27 @@ import type { HookHandler } from "./types.js";
 
 const MAX_INJECT = 8000;
 
+/** How to use memories and docs; first, so it is not lost under the tool list. */
+export const KNOWLEDGE_GUIDANCE = [
+  "Project knowledge (check before deciding, not after):",
+  '- Before starting a task or changing a design: em_recall {query} for past decisions, constraints, rejected approaches and fixed errors on that topic; em_memory {action:"read", name} shows a whole memory.',
+  '- For any library, framework, service or API the project uses: em_docs {action:"lookup", query} first; WebFetch/WebSearch only when the indexed docs do not answer it.',
+  '- eminiar also attaches this knowledge on its own; act on it rather than skimming past it: matching memories and doc pages on each prompt ("eminiar recall"), memories linked to a file you read or edit ("eminiar memory"), a file\'s fix record and importers before you edit it ("eminiar history" / "eminiar graph"), bug-prone files before a git commit, earlier occurrences of an error and how they were resolved after a failed call, and indexed doc pages before WebSearch/WebFetch ("eminiar docs"). Update a memory when your change overrides it.',
+  "- When you settle something durable (a decision and why, a constraint, a gotcha): em_remember {content, kind, name?} so the next session starts knowing it.",
+].join("\n");
+
 export function routingGuidance(mode: string): string {
   return [
+    KNOWLEDGE_GUIDANCE,
+    "",
     `eminiar is active (routing: ${mode}). Keep raw tool output out of the context window:`,
     "- em_execute {language, code, intent}: run shell/JS/TS/python/… in the project; outputs over 5 KB are indexed and only sections matching `intent` come back, plus searchable terms.",
     "- em_batch_execute {commands:[{label, command}], queries}: several commands in parallel, answers in one round trip.",
     "- em_execute_file {path, code}: process a large file; your code gets $EM_FILE and only what it prints returns.",
     "- em_fetch_and_index {url, queries}: docs and web pages, indexed with a 24h cache.",
-    '- em_docs {action:"lookup", query}: the project\'s documentation knowledge base (local docs plus the libraries, services and APIs it uses) — ask it before WebFetch/WebSearch; {action:"discover"} / {action:"add", pick:"recommended"} build it, {action:"sync"} refreshes it.',
-    '- em_search {queries, sort:"timeline"}: everything indexed plus session memory; em_recall {query} for past decisions, constraints and errors.',
-    "- em_remember {content, kind, name?, status?}: record a decision/constraint/fact as a markdown memory under .eminiar/memories (survives compaction, shareable via git); em_memory {action: list|read|edit|rename|delete|status} manages them.",
+    '- em_docs: the documentation knowledge base (local docs plus the libraries, services and APIs the project uses); {action:"discover"} / {action:"add", pick:"recommended"} build it, {action:"sync"} refreshes it.',
+    '- em_search {queries, sort:"timeline"}: everything indexed plus session memory.',
+    "- em_remember {content, kind, name?, status?}: memories are markdown under .eminiar/memories (survive compaction, shareable via git); em_memory {action: list|read|edit|rename|delete|status} manages them.",
     '- em_architecture {aspects?}: the project map (folders, entry points, routes, hotspots, decisions) in one call; em_symbols {name_path | mode:"overview", file} for a symbol or a file outline; em_graph_impact {node} before a refactor; em_graph_changes for what the current diff reaches; em_graph_query {pattern | preset} to walk the graph; em_index_status for coverage. em_stats shows savings.',
     "- em_history {action: overview | file {path} | risk | commit {sha} | branch {name} | symbol {name_path} | search {query}}: the git history classified (feat/fix/refactor…), branches vs base, and each fix traced back to the commit that caused it — ask it before editing a file or committing instead of running git log/blame; commit messages are searchable via em_search (source git).",
     "Plain Bash/Read/Grep remain right for short fixed output and files you are about to edit.",

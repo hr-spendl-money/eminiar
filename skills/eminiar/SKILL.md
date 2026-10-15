@@ -1,10 +1,38 @@
 ---
 name: eminiar
-description: Use eminiar's em_* tools to keep large outputs out of the context window — run commands and scripts in the sandbox (em_execute, em_batch_execute, em_execute_file), search indexed knowledge and session memory (em_search, em_recall), query the project graph (em_graph_impact) and the classified git history (em_history). Triggers on any task that would read logs, test output, git history, dependency trees, API responses, large files, or documentation.
+description: Use eminiar's em_* tools to check the project's memories and documentation before deciding, and to keep large outputs out of the context window — recall past decisions, constraints and fixes (em_recall, em_memory), answer library/service/API questions from the indexed docs (em_docs lookup), run commands and scripts in the sandbox (em_execute, em_batch_execute, em_execute_file), search everything indexed (em_search), query the project graph (em_graph_impact) and the classified git history (em_history). Triggers on starting a task, changing a design, choosing an approach, using a library or API, or any task that would read logs, test output, git history, dependency trees, API responses, large files, or documentation.
 user-invocable: false
 ---
 
 # eminiar routing guide
+
+## Knowledge first
+
+The project remembers things so you do not have to rediscover or re-decide them.
+
+- **Before starting a task or changing a design**, `em_recall {query}` for the decisions,
+  constraints, rejected approaches and fixed errors on that topic. Respect what it returns, or
+  supersede it explicitly (`em_remember {kind: "decision", supersedes}`).
+- **Before WebFetch/WebSearch** for a library, framework, service or API the project uses,
+  `em_docs {action: "lookup", query}`. Go to the web only when the indexed docs do not answer.
+- **Recall arrives on its own too.** Treat these hook notes as project rules, not noise:
+  - `eminiar recall — …` on a prompt: memories and doc pages matching the request.
+  - `eminiar memory: …` before reading or editing a file: the memories linked to it. Read the
+    full memory with `em_memory {action: "read", name}` when the gist is not enough, and update
+    it when your change overrides it.
+  - `eminiar history: … is bug-prone` before an edit: read the fixes with
+    `em_history {action: "file", path}` and keep the behaviour they restored under test.
+  - `eminiar graph: … imported by N files` before an edit: `em_graph_impact` before changing an
+    exported signature.
+  - Before `git commit`: the bug-prone and widely imported files in the commit.
+  - After a failed call: `this error has been seen before` with what resolved it last time. Try
+    that first.
+  - `eminiar docs: …` before WebSearch/WebFetch: indexed pages that already answer it.
+- **When something durable is settled** (a decision and why, a constraint, a gotcha, a preference),
+  `em_remember` it, with `related_files: ["<path>"]` when it is about specific files, so it is
+  surfaced the next time those files are read or edited.
+
+## Keep output out of context
 
 Every byte a tool returns stays in the conversation. Prefer doing the work in the sandbox and
 surfacing only the answer.

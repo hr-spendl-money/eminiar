@@ -134,6 +134,41 @@ Commit the directory so teammates share it. Rows recorded before 0.1.2 are migra
 on first use. `/em-onboard` writes `onboarding/{overview,structure,commands,conventions,documentation}`,
 which every session start points at until they exist.
 
+### Recall without asking
+
+Claude does not have to remember to call `em_recall` or `em_docs`; the hooks bring the relevant
+knowledge to it:
+
+- **Every prompt** (`UserPromptSubmit`) is matched against the memories and the indexed
+  documentation. Up to 3 memories and 2 doc pages that share at least two distinctive terms with
+  the prompt (three for long prompts) are attached as `eminiar recall — …`, with the name to read
+  in full. Superseded and deprecated memories are skipped.
+- **Reading or editing a file** (`Read`, `Edit`, `MultiEdit`, `Write`) attaches the memories whose
+  `related` list names that file or a symbol in it, as `eminiar memory: …`. This works in every
+  routing mode, including `off`.
+- **Editing a file** (`Edit`, `MultiEdit`, `Write`) also attaches its **fix history** when it is
+  bug-prone (`eminiar history: … 5/9 commits were fixes; 2 earlier changes later needed fixing;
+  last fix …`) and its **fan-in** when five or more files import it (`eminiar graph: … imported by
+  N files`).
+- **`git commit`** (Bash) lists the bug-prone and widely imported files the commit includes, from
+  the index (plus tracked changes with `-a`).
+- **A failed tool call** (`PostToolUseFailure`, now synchronous so the answer arrives with the
+  error) attaches earlier occurrences of the same error with the resolution recorded after them,
+  and memories that mention it.
+- **WebSearch / WebFetch** attach the indexed doc pages that already cover the query
+  (`eminiar docs: …`); in enforce mode they appear in the WebFetch denial reason.
+- **Subagents** get the memories and doc pages matching their task in their brief, because they
+  never see the parent's session start or prompts.
+- The **session brief** lists constraints and preferences next to the accepted decisions, and the
+  session guidance opens with the recall-first workflow.
+
+Each memory, page, file note or past error is shown once per context window: the window restarts
+after a compaction or resume, so knowledge that was summarised away comes back when it is
+relevant again. Hooks never run `git log` or load the embedding model: recall is a few FTS
+queries, and history comes from a per-file risk table that every history build persists and the
+server warm-up rebuilds when HEAD moves. Tune or disable each path with `recall` in
+`eminiar.config.json`.
+
 ## Documentation knowledge base
 
 `em_docs {action: "discover"}` scans the project (and one level of sub-projects, for multi-repo
@@ -178,12 +213,14 @@ docs-only search. Teams extend the catalogue with `docs.catalog` in `eminiar.con
 See `eminiar.config.schema.json` for every key: `routing`, `sandbox` (timeouts, output cap, env
 allowlist, disabled languages), `search`, `embeddings`, `graph.include/exclude` (TS/JS, Python and
 Go by default; `node_modules`, `dist`, `vendor`, virtualenvs excluded), `git.maxCommits`,
-`index.docs`, `permissions.extraDeny`, `memories.dir` (default `.eminiar/memories`), `docs`
+`index.docs`, `permissions.extraDeny`, `memories.dir` (default `.eminiar/memories`), `recall`
+(`onPrompt`, `onFile`, `onAgent`, `onCommit`, `onError`, `onWeb`, `maxMemories` 3, `maxDocs` 2), `docs`
 (`manifest`, `ttlHours`, `crawl.depth/maxPages/maxPageBytes`, `embed`,
 `discover.includeDev/subprojects`, extra `catalog` entries with a `tier`).
 
 Hooks add graph context without blocking anything: a session starts with a project brief
-(overview, accepted decisions, hot files, index freshness), subagents get the same brief, a Grep
+(overview, accepted decisions, constraints and preferences, hot files, index freshness),
+subagents get the same brief plus the memories matching their task, a Grep
 or Glob is annotated with matching symbols, and reading a partially indexed file says so.
 
 All data lives in `~/.eminiar/`: one SQLite DB per project (`projects/<id>/eminiar.db`), a global DB

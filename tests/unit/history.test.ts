@@ -15,6 +15,8 @@ import {
   getHistory,
   originsForFile,
   readBriefSummary,
+  readFileRisk,
+  refreshHistorySummary,
   resolveCommit,
   riskyFiles,
 } from "../../src/history/model.js";
@@ -237,6 +239,12 @@ describe("history model", () => {
     const brief = readBriefSummary(db);
     expect(brief?.commits).toBe(8);
     expect(brief?.risky).toContain("src/service.ts");
+    // the per-file table the edit and commit hooks read instead of running git
+    const service = readFileRisk(db)["src/service.ts"];
+    expect(service?.fixes).toBeGreaterThan(0);
+    expect(service?.lastFix).toMatch(/^[0-9a-f]{7,} /);
+    // HEAD has not moved: the warm-up refresh is a no-op
+    expect(refreshHistorySummary(ctx, db)).toBe(false);
   });
 
   it("indexes commit messages for search", async () => {

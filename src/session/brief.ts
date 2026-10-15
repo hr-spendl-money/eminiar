@@ -33,6 +33,15 @@ export function renderProjectBrief(
   if (decisions.length)
     lines.push(`Accepted decisions (em_memory {action:"read", name}): ${decisions.join(" · ")}`);
 
+  // Constraints and preferences are the "never do X" knowledge: they lead the brief's rules.
+  const rules = (["constraint", "preference"] as const).flatMap((kind) =>
+    db
+      .memoryList({ kind, limit: 6 })
+      .filter((m) => m.name && m.status !== "superseded" && m.status !== "deprecated")
+      .map((m) => `${m.name}: ${firstLine(m.content, 90)}`),
+  );
+  if (rules.length) lines.push(`Constraints & preferences: ${rules.join(" · ")}`);
+
   const hot = db.metricsTop({ kind: "file", limit: 5 }).filter((r) => r.score > 0);
   if (hot.length) lines.push(`Hot files (fan-in × churn): ${hot.map((r) => r.path).join(", ")}`);
 
@@ -113,10 +122,17 @@ function freshnessLine(db: StorageAdapter): string | undefined {
 function fitBudget(lines: string[], budget: number): string {
   let out = lines.join("\n");
   while (out.length > budget && lines.length > 1) {
-    // drop the least important line first: hot files, then decisions, then the overview
-    const order = ["History (", "Hot files", "Accepted decisions", "Project:"];
-    const idx = lines.findIndex((l) => order.some((p) => l.startsWith(p)));
-    if (idx === -1) break;
+    // drop the least important line first: history, hot files, decisions, rules, the overview
+    const order = [
+      "History (",
+      "Hot files",
+      "Accepted decisions",
+      "Constraints & preferences",
+      "Project:",
+    ];
+    const prefix = order.find((p) => lines.some((l) => l.startsWith(p)));
+    if (!prefix) break;
+    const idx = lines.findIndex((l) => l.startsWith(prefix));
     lines.splice(idx, 1);
     out = lines.join("\n");
   }

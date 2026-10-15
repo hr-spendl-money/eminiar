@@ -8,6 +8,7 @@ import {
 } from "../capture/classify.js";
 import { getContext } from "../context.js";
 import { indexContent } from "../index/indexer.js";
+import { recallForError, recallForText, recordShown } from "../session/recall.js";
 import { globalDb } from "../stats/global.js";
 import type { StorageAdapter } from "../storage/adapter.js";
 import { getStorage } from "../storage/index.js";
@@ -66,12 +67,30 @@ function open(input: HookInput): { db: StorageAdapter; root: string; sessionId: 
   return { db, root: ctx.root, sessionId };
 }
 
-export const userPromptSubmit: HookHandler = (input) => {
+export const userPromptSubmit: HookHandler = async (input) => {
   if (!input.prompt?.trim()) return undefined;
   const { db, sessionId } = open(input);
   db.sessionUpsert({ id: sessionId, last_prompt: clip(input.prompt, 600) });
   persist(db, sessionId, withPriority(sessionId, classifyPrompt(input.prompt)));
-  return undefined;
+  // Hand Claude the memories and doc pages this prompt touches, so it does not have
+  // to remember to ask em_recall / em_docs first.
+  const { recall } = getContext(input.cwd).config;
+  if (!recall.onPrompt) return undefined;
+  try {
+    const r = await recallForText(db, input.prompt, {
+      maxMemories: recall.maxMemories,
+      maxDocs: recall.maxDocs,
+      sessionId,
+    });
+    if (!r.text) return undefined;
+    recordShown(db, sessionId, r.keys);
+    return {
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: r.text },
+    };
+  } catch {
+    // recall is best effort; never block a prompt on it
+    return undefined;
+  }
 };
 
 /** 3+ calls with identical input in the last 30 → iteration loop (recorded once per key). */
@@ -117,9 +136,26 @@ export const postToolUse: HookHandler = (input) => {
   return undefined;
 };
 
-export const postToolUseFailure: HookHandler = (input) => {
+export const postToolUseFailure: HookHandler = async (input) => {
   if (!input.tool_name) return undefined;
   const { db, root, sessionId } = open(input);
+  // Look the error up before it is persisted, so it does not find itself.
+  let recalled: string | undefined;
+  const { recall } = getContext(input.cwd).config;
+  if (recall.onError && input.error) {
+    try {
+      const r = await recallForError(db, input.error, {
+        sessionId,
+        maxMemories: Math.min(2, recall.maxMemories),
+      });
+      if (r.text) {
+        recalled = r.text;
+        recordShown(db, sessionId, r.keys);
+      }
+    } catch {
+      // recall is best effort
+    }
+  }
   const drafts = classifyToolCall({
     toolName: input.tool_name,
     toolInput: input.tool_input ?? {},
@@ -127,7 +163,9 @@ export const postToolUseFailure: HookHandler = (input) => {
     root,
   }).filter((d) => d.category !== "tool_call");
   persist(db, sessionId, withPriority(sessionId, drafts));
-  return undefined;
+  return recalled
+    ? { hookSpecificOutput: { hookEventName: "PostToolUseFailure", additionalContext: recalled } }
+    : undefined;
 };
 
 export const subagentStop: HookHandler = (input) => {
