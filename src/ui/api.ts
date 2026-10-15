@@ -17,6 +17,7 @@ import { resolveProvider } from "../docs/resolve.js";
 import { formatSync, syncSources } from "../docs/sync.js";
 import { embeddingStatus, kickEmbedding, vectorRanker } from "../embeddings/queue.js";
 import { nodeLabel } from "../graph/format.js";
+import { fileId, fileOf, parseId } from "../graph/ids.js";
 import { coupled, dependencies, hotspots, impact, neighbors, orphans } from "../graph/query.js";
 import { fullDoctor } from "../install/doctor.js";
 import {
@@ -422,15 +423,23 @@ function visEdges(edges: GraphEdgeRow[]): VisEdge[] {
   return edges.map((e) => ({ src: e.src, dst: e.dst, kind: e.kind, weight: e.weight }));
 }
 
+/** Upper bound on edges read per kind for the project map. */
+const MAP_EDGES_PER_KIND = 50_000;
+
 /**
- * The file-level map of the project: every tree-sitter file node, `imports` edges
- * between files, and `co_changes` edges above `minCoChange`. Packages are folded
- * away so the picture stays about the repo. Capped at `limit` files by degree.
+ * The file-level map of the project: every tree-sitter file node and the edges of
+ * `kinds` between them (default `imports` + `co_changes`). Symbol-level edges
+ * (`calls`, `references`, `extends`, …) are lifted to the files that hold their
+ * endpoints, so the map answers "which files call which"; edges that collapse onto
+ * one file (`defines`, intra-file calls) drop out. Packages are folded away so the
+ * picture stays about the repo; other endpoints (memories, routes) are kept as
+ * extra nodes. Capped at `limit` files by degree.
  */
 export function graphMap(
   ctx: ProjectContext,
   opts: {
     limit?: number | undefined;
+    kinds?: string[] | undefined;
     coChanges?: boolean | undefined;
     pathFilter?: string | undefined;
   } = {},
@@ -440,12 +449,41 @@ export function graphMap(
   let files = db.graphFileNodes();
   if (opts.pathFilter)
     files = files.filter((f) => (f.path ?? f.name).includes(opts.pathFilter as string));
-  const ids = files.map((f) => f.id);
-  const idSet = new Set(ids);
-  const kinds = opts.coChanges === false ? ["imports"] : ["imports", "co_changes"];
-  const raw = db.graphEdgesFrom(ids, kinds).filter((e) => idSet.has(e.dst));
+  const fileSet = new Set(files.map((f) => f.id));
+  const kinds = opts.kinds ?? (opts.coChanges === false ? ["imports"] : ["imports", "co_changes"]);
+
+  // A file or symbol becomes its file; a package is folded away; anything else
+  // (memory, route, concept) stays as its own node.
+  const lift = (id: string): string | undefined => {
+    const kind = parseId(id).kind;
+    if (kind === "file" || kind === "sym") {
+      const rel = fileOf(id);
+      const f = rel === undefined ? undefined : fileId(rel);
+      return f && fileSet.has(f) ? f : undefined;
+    }
+    return kind === "pkg" ? undefined : id;
+  };
+
+  const merged = new Map<string, VisEdge>();
+  for (const kind of kinds) {
+    for (const e of db.graphEdgesByKind(kind, MAP_EDGES_PER_KIND)) {
+      if (kind === "co_changes" && e.weight < 0.3) continue;
+      const src = lift(e.src);
+      const dst = lift(e.dst);
+      if (!src || !dst || src === dst) continue;
+      if (!fileSet.has(src) && !fileSet.has(dst)) continue;
+      const key =
+        kind === "co_changes" ? `${[src, dst].sort().join("|")}|co` : `${src}|${dst}|${kind}`;
+      const prev = merged.get(key);
+      // co_changes keeps its strength (it drives line width); lifted edges count occurrences.
+      if (prev)
+        prev.weight = kind === "co_changes" ? Math.max(prev.weight, e.weight) : prev.weight + 1;
+      else merged.set(key, { src, dst, kind, weight: kind === "co_changes" ? e.weight : 1 });
+    }
+  }
+
   const degree = new Map<string, number>();
-  for (const e of raw) {
+  for (const e of merged.values()) {
     degree.set(e.src, (degree.get(e.src) ?? 0) + 1);
     degree.set(e.dst, (degree.get(e.dst) ?? 0) + 1);
   }
@@ -455,23 +493,24 @@ export function graphMap(
       .slice(0, limit)
       .map((f) => f.id),
   );
-  const seenEdge = new Set<string>();
   const edges: VisEdge[] = [];
-  for (const e of raw) {
-    if (!keep.has(e.src) || !keep.has(e.dst)) continue;
-    if (e.kind === "co_changes" && e.weight < 0.3) continue;
-    const key =
-      e.kind === "co_changes"
-        ? `${[e.src, e.dst].sort().join("|")}|co`
-        : `${e.src}|${e.dst}|${e.kind}`;
-    if (seenEdge.has(key)) continue;
-    seenEdge.add(key);
-    edges.push({ src: e.src, dst: e.dst, kind: e.kind, weight: e.weight });
+  const extra = new Set<string>();
+  for (const e of merged.values()) {
+    const srcOk = keep.has(e.src) || (!fileSet.has(e.src) && keep.has(e.dst));
+    const dstOk = keep.has(e.dst) || (!fileSet.has(e.dst) && keep.has(e.src));
+    if (!srcOk || !dstOk) continue;
+    if (!keep.has(e.src)) extra.add(e.src);
+    if (!keep.has(e.dst)) extra.add(e.dst);
+    edges.push(e);
   }
+  const extraRows = new Map(db.graphGetNodes([...extra]).map((n) => [n.id, n]));
   return {
     mode: "map",
     total: files.length,
-    nodes: files.filter((f) => keep.has(f.id)).map((f) => visNode(f, f.id)),
+    nodes: [
+      ...files.filter((f) => keep.has(f.id)).map((f) => visNode(f, f.id)),
+      ...[...extra].map((id) => visNode(extraRows.get(id), id)),
+    ],
     edges,
   };
 }
