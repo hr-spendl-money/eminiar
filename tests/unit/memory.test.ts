@@ -17,8 +17,10 @@ import {
   edit,
   isValidName,
   list,
+  memoryLinks,
   read,
   reconcile,
+  relatedTarget,
   remove,
   rename,
   write,
@@ -316,5 +318,50 @@ describe("memory tools", () => {
     reconcile(ctx, db);
     expect(db.memoryCount()).toBe(before);
     expect(db.graphGetNode("memory:auth/session-tokens")).toBeDefined();
+  });
+});
+
+describe("memory links in the graph", () => {
+  it("maps related mem: ids to memory: nodes", () => {
+    expect(relatedTarget("mem:auth/tokens")).toBe("memory:auth/tokens");
+    expect(relatedTarget("file:src/a.ts")).toBe("file:src/a.ts");
+    expect(relatedTarget("memory:x")).toBe("memory:x");
+  });
+
+  it("finds mem: links in a body, bare, in backticks and as link targets", () => {
+    const body =
+      "See mem:links/target. Also `mem:links/other` and [why](mem:links/third), " +
+      "not xmem:links/no or mem:Bad/Name, and mem:links/self again.";
+    expect(memoryLinks(body, "links/self")).toEqual(["links/target", "links/other", "links/third"]);
+  });
+
+  it("writes mentions edges to memory: nodes and links edges for body references", () => {
+    write(ctx, db, { name: "links/target", kind: "fact", content: "The target." });
+    write(ctx, db, {
+      name: "links/source",
+      kind: "decision",
+      content: "Builds on mem:links/target and mem:links/missing.",
+      related: ["mem:links/target", "file:src/a.ts"],
+      tags: ["graph"],
+    });
+    const out = db.graphEdgesFrom(["memory:links/source"]);
+    const by = (kind: string) =>
+      out
+        .filter((e) => e.kind === kind)
+        .map((e) => e.dst)
+        .sort();
+    expect(by("mentions")).toEqual(["file:src/a.ts", "memory:links/target"]);
+    expect(by("links")).toEqual(["memory:links/missing", "memory:links/target"]);
+    // the file keeps the reader's mem: spelling
+    expect(readFileSync(file("links/source"), "utf8")).toContain("mem:links/target");
+    expect(db.graphDanglingEdges("memory:").map((e) => e.dst)).toEqual(["memory:links/missing"]);
+  });
+
+  it("follows a rename: references are rewritten and the edges point at the new node", () => {
+    rename(ctx, db, "links/target", "links/renamed");
+    const out = db.graphEdgesFrom(["memory:links/source"]).map((e) => `${e.kind} ${e.dst}`);
+    expect(out).toContain("links memory:links/renamed");
+    expect(out).toContain("mentions memory:links/renamed");
+    expect(out).not.toContain("links memory:links/target");
   });
 });
