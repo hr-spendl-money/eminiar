@@ -60,6 +60,7 @@ export const ConfigSchema = z.object({
           "**/*.cjs",
           "**/*.py",
           "**/*.go",
+          "**/*.php",
         ]),
       exclude: z
         .array(z.string())
@@ -76,6 +77,7 @@ export const ConfigSchema = z.object({
           "**/site-packages/**",
           "**/vendor/**",
           "**/*.min.js",
+          "**/*.blade.php",
         ]),
     })
     .prefault({}),

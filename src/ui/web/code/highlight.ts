@@ -5,6 +5,8 @@ import "prismjs/components/prism-jsx.js";
 import "prismjs/components/prism-tsx.js";
 import "prismjs/components/prism-python.js";
 import "prismjs/components/prism-go.js";
+import "prismjs/components/prism-markup-templating.js";
+import "prismjs/components/prism-php.js";
 import "prismjs/components/prism-json.js";
 import "prismjs/components/prism-markdown.js";
 import "prismjs/components/prism-bash.js";

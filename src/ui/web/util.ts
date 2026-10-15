@@ -115,6 +115,7 @@ export function langOf(path: string): string {
       jsx: "jsx",
       py: "python",
       go: "go",
+      php: "php",
       json: "json",
       md: "markdown",
       sh: "bash",

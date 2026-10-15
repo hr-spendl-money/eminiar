@@ -51,7 +51,7 @@ const NodeFilterSchema = z.object({
 export const emGraphQuery = defineTool({
   name: "em_graph_query",
   description:
-    'Look up nodes in the project knowledge graph (files, functions, classes, routes, packages, people, concepts, memories) by name/path, run a preset (hotspots, coupled, orphans, dead_code, routes, cycles, clusters, stats), or run a structured pattern: start at nodes matching `from`, walk `edge.kinds` in `edge.direction` for `edge.depth` hops, keep what matches `to` — e.g. {from:{kind:"route"}, edge:{kinds:["handles"], direction:"in"}} lists every route handler, {from:{name:"^parseFile$"}, edge:{kinds:["calls"], direction:"in", depth:2}} its callers two levels up. Built from tree-sitter (TS/JS, Python, Go), git history, memories and em_graph_add.',
+    'Look up nodes in the project knowledge graph (files, functions, classes, routes, packages, people, concepts, memories) by name/path, run a preset (hotspots, coupled, orphans, dead_code, routes, cycles, clusters, stats), or run a structured pattern: start at nodes matching `from`, walk `edge.kinds` in `edge.direction` for `edge.depth` hops, keep what matches `to` — e.g. {from:{kind:"route"}, edge:{kinds:["handles"], direction:"in"}} lists every route handler, {from:{name:"^parseFile$"}, edge:{kinds:["calls"], direction:"in", depth:2}} its callers two levels up. Built from tree-sitter (TS/JS, Python, Go, PHP), git history, memories and em_graph_add.',
   schema: {
     query: z.string().optional().describe("Substring of a name, path or id"),
     kind: z

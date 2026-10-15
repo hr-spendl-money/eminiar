@@ -19,7 +19,16 @@ import { contextModeInstalled, effectiveRoutingMode } from "./coexist.js";
 import { hookLog } from "./log.js";
 import type { HookHandler, HookInput, HookOutput } from "./types.js";
 
-const SYMBOL_KINDS = ["function", "class", "method", "interface", "type", "enum", "variable"];
+const SYMBOL_KINDS = [
+  "function",
+  "class",
+  "method",
+  "interface",
+  "trait",
+  "type",
+  "enum",
+  "variable",
+];
 
 /** The longest identifier-like run in a Grep/Glob pattern (`parse\w+File` → `parse`). */
 export function literalOf(pattern: string): string | undefined {

@@ -1,13 +1,16 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   httpMethod,
   joinRoutePath,
+  laravelResource,
   normalizeRoutePath,
   parseAliasKey,
   parseRestShorthand,
+  parseRouteAnnotations,
+  phpRoutePath,
 } from "../../src/graph/routes.js";
 import { type ParsedFile, parseFile } from "../../src/graph/treesitter.js";
 
@@ -16,6 +19,20 @@ beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "em-routes-"));
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+/** A fixture file under the temp root (PHP handler resolution needs real class files). */
+function write(rel: string, content: string): void {
+  mkdirSync(dirname(join(root, rel)), { recursive: true });
+  writeFileSync(join(root, rel), content);
+}
+
+/** `<?php namespace …; class …` with the given methods, at the PSR-4 path of `fqcn`. */
+function phpClass(file: string, fqcn: string, methods: string[] = []): void {
+  const parts = fqcn.split("\\");
+  const name = parts.pop()!;
+  const body = methods.map((m) => `    public function ${m}() {}`).join("\n");
+  write(file, `<?php\nnamespace ${parts.join("\\")};\n\nclass ${name}\n{\n${body}\n}\n`);
+}
 
 /** `[ "GET /users <framework>", ... ]` sorted, plus handler ids per route. */
 function summarise(p: ParsedFile) {
@@ -88,6 +105,50 @@ describe("route helpers", () => {
     expect(parseRestShorthand("GET /:id", "get")).toEqual([{ method: "GET", path: "/:id" }]);
     expect(parseRestShorthand("/search", "find")).toEqual([{ method: "ALL", path: "/search" }]);
     expect(parseRestShorthand(true, "welcome")).toEqual([{ method: "ALL", path: "/welcome" }]);
+  });
+
+  it("joins PHP route paths and drops parameter requirements", () => {
+    expect(phpRoutePath(undefined, "users/{id}")).toBe("/users/:id");
+    expect(phpRoutePath("/admin", "users/{id?}")).toBe("/admin/users/:id?");
+    expect(phpRoutePath("/api", "/items/{id:[0-9]+}")).toBe("/api/items/:id");
+    expect(phpRoutePath("/y", "{year:\\d{4}}")).toBe("/y/:year");
+    expect(phpRoutePath("/blog", "/{id<\\d+>}/edit")).toBe("/blog/:id/edit");
+    expect(phpRoutePath("/blog", "")).toBe("/blog");
+  });
+
+  it("expands Laravel resources", () => {
+    expect(laravelResource("photos").map((s) => `${s.method} ${s.path} ${s.action}`)).toEqual([
+      "GET /photos index",
+      "GET /photos/create create",
+      "POST /photos store",
+      "GET /photos/:photo show",
+      "GET /photos/:photo/edit edit",
+      "PUT /photos/:photo update",
+      "PATCH /photos/:photo update",
+      "DELETE /photos/:photo destroy",
+    ]);
+    expect(laravelResource("categories", true, undefined, ["destroy"]).map((s) => s.path)).toEqual([
+      "/categories",
+      "/categories",
+      "/categories/:category",
+      "/categories/:category",
+      "/categories/:category",
+    ]);
+    expect(laravelResource("posts.comments", false, ["show"])).toEqual([
+      { method: "GET", path: "/posts/:post/comments/:comment", action: "show" },
+    ]);
+  });
+
+  it("parses Symfony @Route annotations", () => {
+    const doc = '/**\n * @Route("/legacy/{id}", name="legacy", methods={"GET", "POST"})\n */';
+    expect(parseRouteAnnotations(doc)).toEqual([
+      { method: "GET", path: "/legacy/{id}" },
+      { method: "POST", path: "/legacy/{id}" },
+    ]);
+    expect(parseRouteAnnotations('/** @Route(path="/any") */')).toEqual([
+      { method: "ALL", path: "/any" },
+    ]);
+    expect(parseRouteAnnotations("/** @return Response */")).toEqual([]);
   });
 });
 
@@ -284,5 +345,233 @@ describe("moleculer", () => {
   it("does not mistake unrelated `aliases` objects for a gateway", async () => {
     const code = 'export const config = { aliases: { "@": "./src", "~": "./lib" } };\n';
     expect(summarise(await parseFile(root, "build.config.ts", code)).routes).toEqual([]);
+  });
+});
+
+describe("laravel", () => {
+  const ctl = (name: string) => `sym:laravel/app/Http/Controllers/${name}.php#${name}`;
+  beforeAll(() => {
+    write("laravel/composer.json", JSON.stringify({ autoload: { "psr-4": { "App\\": "app/" } } }));
+    phpClass(
+      "laravel/app/Http/Controllers/UserController.php",
+      "App\\Http\\Controllers\\UserController",
+    );
+    phpClass(
+      "laravel/app/Http/Controllers/PhotoController.php",
+      "App\\Http\\Controllers\\PhotoController",
+    );
+    phpClass(
+      "laravel/app/Http/Controllers/PostController.php",
+      "App\\Http\\Controllers\\PostController",
+    );
+  });
+
+  it("reads verbs, match/any, prefix and controller groups and facade chains", async () => {
+    const code = [
+      "<?php",
+      "use App\\Http\\Controllers\\UserController;",
+      "use Illuminate\\Support\\Facades\\Route;",
+      "",
+      "Route::get('/users/{id}', [UserController::class, 'show'])->name('users.show');",
+      "Route::post('users', 'UserController@store');",
+      "Route::match(['get', 'post'], '/contact', fn () => view('contact'));",
+      "Route::any('/fallback', function () { return 'x'; });",
+      "Route::middleware('auth')->put('/me', [UserController::class, 'update']);",
+      "Route::prefix('admin')->middleware('auth')->group(function () {",
+      "    Route::delete('/users/{id?}', [UserController::class, 'destroy']);",
+      "    Route::group(['prefix' => 'reports'], function () {",
+      "        Route::get('daily', [UserController::class, 'daily']);",
+      "    });",
+      "});",
+      "Route::controller(UserController::class)->group(function () {",
+      "    Route::get('/profile', 'profile');",
+      "});",
+    ].join("\n");
+    const { routes, handlers } = summarise(await parseFile(root, "laravel/routes/web.php", code));
+    expect(routes).toEqual([
+      "ALL /fallback laravel",
+      "DELETE /admin/users/:id? laravel",
+      "GET /admin/reports/daily laravel",
+      "GET /contact laravel",
+      "GET /profile laravel",
+      "GET /users/:id laravel",
+      "POST /contact laravel",
+      "POST /users laravel",
+      "PUT /me laravel",
+    ]);
+    expect(handlers["route:GET /users/:id"]).toEqual([`${ctl("UserController")}.show`]);
+    // `'Controller@method'` strings resolve against App\Http\Controllers
+    expect(handlers["route:POST /users"]).toEqual([`${ctl("UserController")}.store`]);
+    expect(handlers["route:GET /admin/reports/daily"]).toEqual([`${ctl("UserController")}.daily`]);
+    expect(handlers["route:GET /profile"]).toEqual([`${ctl("UserController")}.profile`]);
+    expect(handlers["route:PUT /me"]).toEqual([`${ctl("UserController")}.update`]);
+    expect(handlers["route:GET /contact"]).toEqual(["file:laravel/routes/web.php"]);
+  });
+
+  it("expands resources with only/except and serves routes/api.php under /api", async () => {
+    const code = [
+      "<?php",
+      "use Illuminate\\Support\\Facades\\Route;",
+      "Route::resource('photos', PhotoController::class)->only(['index', 'show']);",
+      "Route::apiResource('posts.comments', 'PostController')->except(['destroy']);",
+    ].join("\n");
+    const { routes, handlers } = summarise(await parseFile(root, "laravel/routes/api.php", code));
+    expect(routes).toEqual([
+      "GET /api/photos laravel",
+      "GET /api/photos/:photo laravel",
+      "GET /api/posts/:post/comments laravel",
+      "GET /api/posts/:post/comments/:comment laravel",
+      "PATCH /api/posts/:post/comments/:comment laravel",
+      "POST /api/posts/:post/comments laravel",
+      "PUT /api/posts/:post/comments/:comment laravel",
+    ]);
+    expect(handlers["route:GET /api/photos/:photo"]).toEqual([`${ctl("PhotoController")}.show`]);
+    expect(handlers["route:POST /api/posts/:post/comments"]).toEqual([
+      `${ctl("PostController")}.store`,
+    ]);
+  });
+});
+
+describe("symfony", () => {
+  it("reads #[Route] attributes with a class prefix, requirements and @Route annotations", async () => {
+    const code = [
+      "<?php",
+      "namespace App\\Controller;",
+      "",
+      "use Symfony\\Bundle\\FrameworkBundle\\Controller\\AbstractController;",
+      "use Symfony\\Component\\HttpFoundation\\Response;",
+      "use Symfony\\Component\\Routing\\Attribute\\Route;",
+      "",
+      "#[Route('/blog', name: 'blog_')]",
+      "class BlogController extends AbstractController",
+      "{",
+      "    #[Route('', name: 'index', methods: ['GET'])]",
+      "    public function index(): Response { return $this->render('blog/index.html.twig'); }",
+      "",
+      "    #[Route('/{slug}', name: 'show', methods: ['GET', 'HEAD'])]",
+      "    public function show(string $slug): Response { return new Response($slug); }",
+      "",
+      "    #[Route(path: '/{id<\\d+>}/edit', methods: 'POST')]",
+      "    public function edit(int $id): Response { return new Response(''); }",
+      "",
+      "    /**",
+      '     * @Route("/legacy", methods={"GET"})',
+      "     */",
+      "    public function legacy(): Response { return new Response(''); }",
+      "",
+      "    public function helper(): void {}",
+      "}",
+      "",
+      "#[Route('/health', name: 'health', methods: ['GET'])]",
+      "final class HealthController",
+      "{",
+      "    public function __invoke(): Response { return new Response('ok'); }",
+      "}",
+    ].join("\n");
+    const file = "symfony/src/Controller/BlogController.php";
+    const { routes, handlers } = summarise(await parseFile(root, file, code));
+    expect(routes).toEqual([
+      "GET /blog symfony",
+      "GET /blog/:slug symfony",
+      "GET /blog/legacy symfony",
+      "GET /health symfony",
+      "HEAD /blog/:slug symfony",
+      "POST /blog/:id/edit symfony",
+    ]);
+    expect(handlers["route:GET /blog/:slug"]).toEqual([`sym:${file}#BlogController.show`]);
+    expect(handlers["route:GET /blog/legacy"]).toEqual([`sym:${file}#BlogController.legacy`]);
+    expect(handlers["route:GET /health"]).toEqual([`sym:${file}#HealthController.__invoke`]);
+  });
+});
+
+describe("slim, lumen and codeigniter", () => {
+  beforeAll(() => {
+    write("slim/composer.json", JSON.stringify({ autoload: { "psr-4": { "App\\": "src/" } } }));
+    phpClass("slim/src/Action/ListItemsAction.php", "App\\Action\\ListItemsAction", ["__invoke"]);
+    phpClass("slim/src/Action/CreateItemAction.php", "App\\Action\\CreateItemAction", ["handle"]);
+  });
+
+  it("reads $app routes, groups and map() in a Slim app", async () => {
+    const code = [
+      "<?php",
+      "use App\\Action\\ListItemsAction;",
+      "use Psr\\Http\\Message\\ResponseInterface as Response;",
+      "use Slim\\Factory\\AppFactory;",
+      "use Slim\\Routing\\RouteCollectorProxy;",
+      "",
+      "$app = AppFactory::create();",
+      "$app->get('/hello/{name}', function ($request, Response $response, array $args) {",
+      "    return $response;",
+      "});",
+      "$app->group('/api', function (RouteCollectorProxy $group) {",
+      "    $group->get('/items/{id:[0-9]+}', ListItemsAction::class);",
+      "    $group->post('/items', 'App\\Action\\CreateItemAction:handle');",
+      "});",
+      "$app->map(['GET', 'POST'], '/form', fn ($req, $res) => $res);",
+      "$app->run();",
+      "$settings = $container->get('settings');",
+    ].join("\n");
+    const file = "slim/public/index.php";
+    const { routes, handlers } = summarise(await parseFile(root, file, code));
+    expect(routes).toEqual([
+      "GET /api/items/:id slim",
+      "GET /form slim",
+      "GET /hello/:name slim",
+      "POST /api/items slim",
+      "POST /form slim",
+    ]);
+    expect(handlers["route:GET /api/items/:id"]).toEqual([
+      "sym:slim/src/Action/ListItemsAction.php#ListItemsAction",
+    ]);
+    expect(handlers["route:POST /api/items"]).toEqual([
+      "sym:slim/src/Action/CreateItemAction.php#CreateItemAction.handle",
+    ]);
+    expect(handlers["route:GET /hello/:name"]).toEqual([`file:${file}`]);
+  });
+
+  it("reads Lumen $router and CodeIgniter $routes registrations", async () => {
+    const lumen = [
+      "<?php",
+      "$router->get('lumen', ['as' => 'profile', 'uses' => 'LumenController@index']);",
+      "$router->group(['prefix' => 'api'], function () use ($router) {",
+      "    $router->post('items', 'ItemController@store');",
+      "});",
+    ].join("\n");
+    expect(summarise(await parseFile(root, "lumen/routes/web.php", lumen)).routes).toEqual([
+      "GET /lumen http",
+      "POST /api/items http",
+    ]);
+    const ci = [
+      "<?php",
+      "use CodeIgniter\\Router\\RouteCollection;",
+      "",
+      "/** @var RouteCollection $routes */",
+      "$routes->get('/', 'Home::index');",
+      "$routes->group('admin', static function ($routes) {",
+      "    $routes->get('users', 'Admin\\Users::index');",
+      "});",
+    ].join("\n");
+    expect(summarise(await parseFile(root, "ci/app/Config/Routes.php", ci)).routes).toEqual([
+      "GET / codeigniter",
+      "GET /admin/users codeigniter",
+    ]);
+  });
+
+  it("ignores test requests, getters and HTTP clients", async () => {
+    const code = [
+      "<?php",
+      "class UsersTest extends TestCase",
+      "{",
+      "    public function test_index(): void",
+      "    {",
+      "        $this->get('/api/users')->assertOk();",
+      "        $name = $request->get('name', 'default');",
+      "        $value = $cache->get('/key');",
+      "        $client->get('/api/users', ['headers' => ['Accept' => 'json']]);",
+      "        $config->get('app/name', fn () => 1);",
+      "    }",
+      "}",
+    ].join("\n");
+    expect(summarise(await parseFile(root, "tests/UsersTest.php", code)).routes).toEqual([]);
   });
 });
