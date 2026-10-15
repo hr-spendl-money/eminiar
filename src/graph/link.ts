@@ -95,6 +95,13 @@ function inherited(
   return undefined;
 }
 
+/** `Class.member` in `path` where Class exists but the member comes from an ancestor. */
+function ownerAncestor(db: StorageAdapter, path: string, name: string): string | undefined {
+  const dot = name.indexOf(".");
+  const owner = symId(path, name.slice(0, dot));
+  return db.graphGetNode(owner) ? inherited(db, owner, name.slice(dot + 1), 0) : undefined;
+}
+
 function defaultExportOf(db: StorageAdapter, path: string): string | undefined {
   const f = db.graphGetNode(fileId(path));
   if (!f?.meta) return undefined;
@@ -158,6 +165,12 @@ export function linkGraph(db: StorageAdapter): LinkSummary {
           direct = true;
         } else target = goSibling(db, path, head);
       }
+      if (!target && name.includes(".")) {
+        // `$this->notify()` / `self.save()`: a member the class inherits (or takes from a
+        // trait) rather than declares
+        target = ownerAncestor(db, path, name);
+        direct = true;
+      }
       if (target && name.includes(".") && !direct) {
         const rest = name.slice(name.indexOf(".") + 1);
         const member = `${target}.${rest}`;
@@ -199,7 +212,8 @@ export function linkGraph(db: StorageAdapter): LinkSummary {
       const id = symId(e.dst.slice(5), name);
       const target = db.graphGetNode(id)
         ? id
-        : viaReexports(db, e.dst.slice(5), name.split(".")[0]!, 0, new Set());
+        : (viaReexports(db, e.dst.slice(5), name.split(".")[0]!, 0, new Set()) ??
+          (name.includes(".") ? ownerAncestor(db, e.dst.slice(5), name) : undefined));
       if (!target || target === e.src) continue;
       const { unresolved: _u, ...rest } = meta;
       replace(db, e, {

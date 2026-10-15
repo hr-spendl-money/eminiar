@@ -305,3 +305,127 @@ describe("php index", () => {
     expect(db.graphEdgesFrom([show], ["handles"])).toEqual([]);
   }, 60_000);
 });
+
+describe("php composer autoload, namespace blocks and inheritance", () => {
+  let legacyRoot: string;
+  let legacyDb: SqliteAdapter;
+  const legacy: Record<string, string> = {
+    "composer.json": JSON.stringify({
+      require: { php: "^8.1", "laravel/lumen-framework": "^10.0" },
+      autoload: {
+        "psr-0": { Legacy_: "lib/" },
+        classmap: ["database/seeds", "src"],
+        files: ["src/helpers.php"],
+      },
+    }),
+    "lib/Legacy/Mailer.php": "<?php\nclass Legacy_Mailer\n{\n    public function send() {}\n}\n",
+    "database/seeds/UserSeeder.php":
+      "<?php\n\nfinal class UserSeeder\n{\n    public function run() {}\n}\n",
+    "src/helpers.php": "<?php\n\nfunction format_money($v)\n{\n    return $v;\n}\n",
+    "src/Base.php": [
+      "<?php",
+      "trait Audits",
+      "{",
+      "    public function audit() {}",
+      "}",
+      "",
+      "class Base",
+      "{",
+      "    public function save() {}",
+      "}",
+      "",
+    ].join("\n"),
+    "src/Report.php": [
+      "<?php",
+      "class Report extends Base",
+      "{",
+      "    use Audits;",
+      "",
+      "    public function render()",
+      "    {",
+      "        $this->save();",
+      "        $this->audit();",
+      "        return format_money(1);",
+      "    }",
+      "}",
+      "",
+    ].join("\n"),
+    "src/blocks.php": [
+      "<?php",
+      "namespace A {",
+      "    use Lib\\Thing;",
+      "    class X { public function f() { return new Thing(); } }",
+      "}",
+      "namespace B {",
+      "    class Thing {}",
+      "    class Y { public function g() { return new Thing(); } }",
+      "}",
+      "",
+    ].join("\n"),
+    "routes/web.php": "<?php\n$router->get('/ping', 'PingController@ping');\n",
+  };
+
+  beforeAll(() => {
+    legacyRoot = mkdtempSync(join(tmpdir(), "em-php-legacy-"));
+    for (const [p, c] of Object.entries(legacy)) {
+      mkdirSync(join(legacyRoot, p, ".."), { recursive: true });
+      writeFileSync(join(legacyRoot, p), c);
+    }
+    writeFileSync(join(legacyRoot, "package.json"), "{}");
+    legacyDb = new SqliteAdapter(join(legacyRoot, "p.db"));
+  });
+
+  afterAll(() => {
+    legacyDb.close();
+    rmSync(legacyRoot, { recursive: true, force: true });
+  });
+
+  it("resolves PSR-0 and classmap classes", () => {
+    expect(resolvePhpClass(legacyRoot, "src/Report.php", "Legacy_Mailer")).toBe(
+      "lib/Legacy/Mailer.php",
+    );
+    expect(resolvePhpClass(legacyRoot, "src/Report.php", "UserSeeder")).toBe(
+      "database/seeds/UserSeeder.php",
+    );
+    expect(resolvePhpClass(legacyRoot, "src/Report.php", "Missing")).toBeUndefined();
+  });
+
+  it("links composer `files` helpers and labels routes from composer `require`", async () => {
+    const r = await parseFile(legacyRoot, "src/Report.php", legacy["src/Report.php"]!);
+    const calls = r.edges.filter((e) => e.kind === "calls").map((e) => e.dst);
+    expect(calls).toContain("sym:src/helpers.php#format_money");
+    const web = await parseFile(legacyRoot, "routes/web.php", legacy["routes/web.php"]!);
+    expect(web.nodes.find((n) => n.kind === "route")?.meta).toMatchObject({ framework: "lumen" });
+  });
+
+  it("keeps `use` imports to their own braced namespace block", async () => {
+    const b = await parseFile(legacyRoot, "src/blocks.php", legacy["src/blocks.php"]!);
+    const calls = b.edges.filter((e) => e.kind === "calls").map((e) => `${e.src}→${e.dst}`);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "sym:src/blocks.php#X.f→pkg:Lib",
+        "sym:src/blocks.php#Y.g→sym:src/blocks.php#Thing",
+      ]),
+    );
+  });
+
+  it("links $this-> calls to inherited and trait methods", async () => {
+    const lctx: ProjectContext = {
+      root: legacyRoot,
+      id: "legacy",
+      dbPath: join(legacyRoot, "p.db"),
+      config: ConfigSchema.parse({}),
+    };
+    await reindexCode(lctx, legacyDb, { full: true });
+    const calls = legacyDb
+      .graphEdgesFrom(["sym:src/Report.php#Report.render"], ["calls"])
+      .map((e) => e.dst);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "sym:src/Base.php#Base.save",
+        "sym:src/Base.php#Audits.audit",
+        "sym:src/helpers.php#format_money",
+      ]),
+    );
+  }, 60_000);
+});

@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import type { Node as TSNode } from "web-tree-sitter";
 import type { GraphEdge, GraphNode } from "../../storage/types.js";
@@ -49,6 +49,8 @@ const RELATIVE = new Set(["self", "static", "parent"]);
 const ROUTER_VARS = new Set(["$app", "$router", "$routes", "$route", "$group", "$r"]);
 /** Where Laravel's and CodeIgniter's string controller references (`'UserController@show'`) live. */
 const CONTROLLER_NAMESPACES = ["App\\Http\\Controllers", "App\\Controllers"];
+/** Namespace of spatie/laravel-route-attributes (`#[Get('users')]`, `#[Prefix('admin')]`). */
+const SPATIE_ATTRIBUTES = "Spatie\\RouteAttributes\\Attributes\\";
 
 const isFile = (p: string): boolean => {
   try {
@@ -65,67 +67,176 @@ interface Autoload {
   dir: string;
   /** PSR-4 namespace prefixes (with trailing `\`), longest first. */
   psr4: Array<{ prefix: string; dirs: string[] }>;
+  /** PSR-0 prefixes (`Foo\` or `Foo_`), longest first; the prefix is part of the path. */
+  psr0: Array<{ prefix: string; dirs: string[] }>;
+  /** `classmap` directories and files, scanned for classes on the first lookup that needs it. */
+  classmap: string[];
+  /** `files` that composer always loads (global helper functions). */
+  files: string[];
+  /** Packages in `require` (framework detection when no `use` names one). */
+  require: string[];
+  classes?: Map<string, string>;
+  functions?: Map<string, string>;
 }
+
+type AutoloadSection = {
+  "psr-4"?: Record<string, string | string[]>;
+  "psr-0"?: Record<string, string | string[]>;
+  classmap?: string[];
+  files?: string[];
+};
+
+/** Upper bound on files a `classmap` scan reads, so a huge legacy tree cannot stall indexing. */
+const CLASSMAP_MAX_FILES = 5000;
 
 const composerCache = new Map<string, Autoload | null>();
 
-/** The nearest composer.json above `fromAbs` (within root) that declares PSR-4 autoloading. */
+const asList = (v: string | string[]): string[] => (Array.isArray(v) ? v : [v]);
+
+function readComposer(dir: string): Autoload | null {
+  const file = join(dir, "composer.json");
+  if (!isFile(file)) return null;
+  try {
+    const json = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    const info: Autoload = { dir, psr4: [], psr0: [], classmap: [], files: [], require: [] };
+    for (const key of ["autoload", "autoload-dev"]) {
+      const section = json[key] as AutoloadSection | undefined;
+      for (const [prefix, dirs] of Object.entries(section?.["psr-4"] ?? {})) {
+        info.psr4.push({
+          prefix: prefix && !prefix.endsWith("\\") ? `${prefix}\\` : prefix,
+          dirs: asList(dirs),
+        });
+      }
+      for (const [prefix, dirs] of Object.entries(section?.["psr-0"] ?? {}))
+        info.psr0.push({ prefix, dirs: asList(dirs) });
+      info.classmap.push(...(section?.classmap ?? []));
+      info.files.push(...(section?.files ?? []));
+    }
+    info.require = Object.keys((json.require as Record<string, string> | undefined) ?? {});
+    info.psr4.sort((a, b) => b.prefix.length - a.prefix.length);
+    info.psr0.sort((a, b) => b.prefix.length - a.prefix.length);
+    const empty =
+      !info.psr4.length &&
+      !info.psr0.length &&
+      !info.classmap.length &&
+      !info.files.length &&
+      !info.require.length;
+    return empty ? null : info;
+  } catch {
+    return null;
+  }
+}
+
+/** The nearest composer.json above `fromAbs` (within root) that declares autoloading or requires. */
 export function composerAutoload(root: string, fromAbs: string): Autoload | undefined {
   let dir = dirname(fromAbs);
   while (dir.startsWith(root)) {
-    const hit = composerCache.get(dir);
-    if (hit !== undefined) {
-      if (hit) return hit;
-    } else {
-      const file = join(dir, "composer.json");
-      let info: Autoload | null = null;
-      if (isFile(file)) {
-        try {
-          const json = JSON.parse(readFileSync(file, "utf8")) as Record<
-            string,
-            { "psr-4"?: Record<string, string | string[]> } | undefined
-          >;
-          const psr4: Autoload["psr4"] = [];
-          for (const section of [json.autoload, json["autoload-dev"]]) {
-            for (const [prefix, dirs] of Object.entries(section?.["psr-4"] ?? {})) {
-              psr4.push({
-                prefix: prefix && !prefix.endsWith("\\") ? `${prefix}\\` : prefix,
-                dirs: Array.isArray(dirs) ? dirs : [dirs],
-              });
-            }
-          }
-          if (psr4.length) {
-            psr4.sort((a, b) => b.prefix.length - a.prefix.length);
-            info = { dir, psr4 };
-          }
-        } catch {
-          info = null;
-        }
-      }
-      composerCache.set(dir, info);
-      if (info) return info;
+    let hit = composerCache.get(dir);
+    if (hit === undefined) {
+      hit = readComposer(dir);
+      composerCache.set(dir, hit);
     }
+    if (hit) return hit;
     if (dir === root) break;
     dir = dirname(dir);
   }
   return undefined;
 }
 
+/** `.php` files under a `classmap` entry (a directory or a single file). */
+function phpFilesUnder(abs: string, budget: { left: number }): string[] {
+  if (isFile(abs)) return abs.endsWith(".php") ? [abs] : [];
+  let entries: string[];
+  try {
+    entries = readdirSync(abs, { recursive: true, encoding: "utf8" });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (budget.left <= 0) break;
+    if (!e.endsWith(".php") || e.split(/[\\/]/).includes("vendor")) continue;
+    out.push(join(abs, e));
+    budget.left--;
+  }
+  return out;
+}
+
+/** Classes declared in the `classmap` paths, by fully-qualified name. */
+function classmapClasses(root: string, auto: Autoload): Map<string, string> {
+  if (auto.classes) return auto.classes;
+  const classes = new Map<string, string>();
+  const budget = { left: CLASSMAP_MAX_FILES };
+  for (const entry of auto.classmap) {
+    for (const f of phpFilesUnder(join(auto.dir, entry), budget)) {
+      if (relative(root, f).startsWith("..")) continue;
+      let code: string;
+      try {
+        code = readFileSync(f, "utf8");
+      } catch {
+        continue;
+      }
+      const ns = /^\s*namespace\s+([\w\\]+)\s*[;{]/m.exec(code)?.[1];
+      for (const m of code.matchAll(
+        /^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum)\s+(\w+)/gm,
+      )) {
+        const fq = ns ? `${ns}\\${m[1]}` : m[1]!;
+        if (!classes.has(fq)) classes.set(fq, toRel(root, f));
+      }
+    }
+  }
+  auto.classes = classes;
+  return classes;
+}
+
 /**
- * Resolve a fully-qualified class name to a project file through composer.json's PSR-4
- * prefixes (`App\` → `app/`). Without a composer.json, namespaces are taken as directories
- * from the project root or `src/`.
+ * Global functions declared in composer's `files` (helpers.php), by name. Files that
+ * declare a namespace are skipped: their functions are reached through `use function`.
+ */
+function autoloadedFunctions(root: string, auto: Autoload): Map<string, string> {
+  if (auto.functions) return auto.functions;
+  const functions = new Map<string, string>();
+  for (const entry of auto.files) {
+    const f = join(auto.dir, entry);
+    if (!isFile(f) || relative(root, f).startsWith("..")) continue;
+    let code: string;
+    try {
+      code = readFileSync(f, "utf8");
+    } catch {
+      continue;
+    }
+    if (/^\s*namespace\s+[\w\\]+\s*[;{]/m.test(code)) continue;
+    for (const m of code.matchAll(/^\s*function\s+&?\s*(\w+)\s*\(/gm))
+      if (!functions.has(m[1]!)) functions.set(m[1]!, toRel(root, f));
+  }
+  auto.functions = functions;
+  return functions;
+}
+
+/**
+ * Resolve a fully-qualified class name to a project file through composer.json: PSR-4
+ * prefixes (`App\` → `app/`), PSR-0 prefixes (`Foo_Bar` → `lib/Foo/Bar.php`), then the
+ * `classmap` paths. Without PSR-4 or PSR-0 rules, namespaces are taken as directories from
+ * the project root or `src/`.
  */
 export function resolvePhpClass(root: string, fromRel: string, fqcn: string): string | undefined {
   const name = fqcn.replace(/^\\+/, "");
   if (!name) return undefined;
   const candidates: string[] = [];
   const auto = composerAutoload(root, resolve(root, fromRel));
-  if (auto) {
+  if (auto?.psr4.length || auto?.psr0.length) {
     for (const { prefix, dirs } of auto.psr4) {
       if (!name.startsWith(prefix)) continue;
       const rest = name.slice(prefix.length).split("\\");
       for (const d of dirs) candidates.push(join(auto.dir, d, ...rest));
+    }
+    for (const { prefix, dirs } of auto.psr0) {
+      if (!name.startsWith(prefix)) continue;
+      // namespace separators are directories; so are underscores in the class name itself
+      const cut = name.lastIndexOf("\\");
+      const ns = cut === -1 ? [] : name.slice(0, cut).split("\\");
+      const cls = name.slice(cut + 1).split("_");
+      for (const d of dirs) candidates.push(join(auto.dir, d, ...ns, ...cls));
     }
   } else {
     const parts = name.split("\\");
@@ -135,7 +246,7 @@ export function resolvePhpClass(root: string, fromRel: string, fqcn: string): st
     const f = `${c}.php`;
     if (isFile(f) && !relative(root, f).startsWith("..")) return toRel(root, f);
   }
-  return undefined;
+  return auto?.classmap.length ? classmapClasses(root, auto).get(name) : undefined;
 }
 
 export function resetPhpCache(): void {
@@ -260,8 +371,10 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
   const exportsList: string[] = [];
   /** functions and constants by local name (declared here or `use function`). */
   const scope = new Map<string, { id: string; confidence: number }>();
-  /** `use` alias → fully-qualified class name. */
-  const classUses = new Map<string, string>();
+  /** `use` alias → fully-qualified class name, for the namespace block being walked. */
+  let classUses = new Map<string, string>();
+  /** each namespace block's own `use` aliases (braced blocks in one file do not share them). */
+  const usesByBlock = new Map<number, Map<string, string>>();
   /** class-like names declared in this file (resolved before their declaration is reached). */
   const declared = new Set<string>();
   const localSyms = new Map<string, string>();
@@ -280,32 +393,45 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
   let namespace = "";
   const namespaces: string[] = [];
   const pushEdge = (e: GraphEdge) => edges.push({ confidence: 1, weight: 1, ...e });
+  const auto = composerAutoload(root, resolve(root, rel));
 
   // `namespace X;` applies to the statements after it; `namespace X { … }` to its body.
-  const stmts: Array<[TSNode, string]> = [];
+  // Each namespace statement starts a block with its own `use` imports.
+  const stmts: Array<[TSNode, string, number]> = [];
+  let block = 0;
   for (const stmt of tree.rootNode.namedChildren) {
     if (!stmt) continue;
     if (stmt.type === "namespace_definition") {
+      block++;
       namespace = stmt.childForFieldName("name")?.text ?? "";
       if (namespace) addNamespace(stmt, namespace);
       for (const s of stmt.childForFieldName("body")?.namedChildren ?? [])
-        if (s) stmts.push([s, namespace]);
-    } else stmts.push([stmt, namespace]);
+        if (s) stmts.push([s, namespace, block]);
+    } else stmts.push([stmt, namespace, block]);
   }
+  const enter = (ns: string, b: number): void => {
+    namespace = ns;
+    let uses = usesByBlock.get(b);
+    if (!uses) {
+      uses = new Map();
+      usesByBlock.set(b, uses);
+    }
+    classUses = uses;
+  };
   for (const [stmt] of stmts) {
     const name = CLASS_KINDS[stmt.type] ? stmt.childForFieldName("name")?.text : undefined;
     if (name) declared.add(name);
   }
-  for (const [stmt, ns] of stmts) {
-    namespace = ns;
+  for (const [stmt, ns, b] of stmts) {
+    enter(ns, b);
     if (stmt.type === "namespace_use_declaration") handleUse(stmt);
   }
-  for (const [stmt, ns] of stmts) {
-    namespace = ns;
+  for (const [stmt, ns, b] of stmts) {
+    enter(ns, b);
     if (stmt.type !== "namespace_use_declaration") collectDecls(stmt);
   }
-  for (const [stmt, ns] of stmts) {
-    namespace = ns;
+  for (const [stmt, ns, b] of stmts) {
+    enter(ns, b);
     if (stmt.type !== "namespace_use_declaration") walkRefs(stmt);
   }
   handleIncludes(tree.rootNode);
@@ -708,7 +834,12 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
     switch (call.type) {
       case "function_call_expression": {
         const fn = call.childForFieldName("function");
-        return fn?.type === "name" ? scope.get(fn.text) : undefined;
+        if (fn?.type !== "name") return undefined;
+        const local = scope.get(fn.text);
+        if (local || !auto?.files.length) return local;
+        // a global helper composer autoloads through `files` (`app/helpers.php`)
+        const file = autoloadedFunctions(root, auto).get(fn.text);
+        return file && file !== rel ? { id: symId(file, fn.text), confidence: 0.8 } : undefined;
       }
       case "member_call_expression":
       case "nullsafe_member_call_expression": {
@@ -935,12 +1066,36 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
     const lower = verb.toLowerCase();
     const args = argsOf(call);
     if (facade && (verb === "resource" || verb === "apiResource")) {
-      resourceRoutes(call, verb === "apiResource", args, caller, chained);
+      const name = phpString(args[0]);
+      if (name) resourceRoutes(call, verb === "apiResource", name, args, caller, chained);
+      return;
+    }
+    if (facade && (verb === "resources" || verb === "apiResources")) {
+      // `Route::resources(['photos' => PhotoController::class, …], $options)`
+      if (args[0]?.type !== "array_creation_expression") return;
+      for (const el of arrayElements(args[0])) {
+        if (el.key)
+          resourceRoutes(
+            call,
+            verb === "apiResources",
+            el.key,
+            [undefined, el.value, args[1]],
+            caller,
+            chained,
+          );
+      }
       return;
     }
     let methods: string[];
     let rest: TSNode[];
-    if (lower === "match" || lower === "map") {
+    if (facade && lower === "view") {
+      // `Route::view('/welcome', 'welcome')`: no handler code, the file serves it
+      methods = ["GET"];
+      rest = args.slice(0, 1);
+    } else if (facade && (lower === "redirect" || lower === "permanentredirect")) {
+      methods = ["ALL"];
+      rest = args.slice(0, 1);
+    } else if (lower === "match" || lower === "map") {
       methods = stringsOf(args[0])
         .map((m) => httpMethod(m))
         .filter((m): m is string => !!m);
@@ -962,23 +1117,33 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
     const ctx = groupContext(call);
     const { handlers, confidence } = handlersOf(rest[1], caller, ctx.controller);
     const path = phpRoutePath(facade ? laravelBase() : undefined, ...ctx.prefixes, ...chained, raw);
-    const framework = facade ? "laravel" : (frameworkOf(importedPkgs) ?? "http");
+    const framework = facade
+      ? "laravel"
+      : (frameworkOf(importedPkgs) ?? frameworkOf(auto?.require ?? []) ?? "http");
     for (const m of methods)
       addRoute(m, path, framework, call.startPosition.row + 1, handlers, confidence);
   }
 
-  /** `Route::resource('photos', PhotoController::class)->only([...])` → the CRUD routes. */
+  /**
+   * `Route::resource('photos', PhotoController::class)->only([...])` → the CRUD routes.
+   * `args` are the call's (name, controller, options); `['only' => …]` options filter too.
+   */
   function resourceRoutes(
     call: TSNode,
     api: boolean,
-    args: TSNode[],
+    name: string,
+    args: Array<TSNode | undefined>,
     caller: string | undefined,
     chained: string[],
   ): void {
-    const name = phpString(args[0]);
-    if (!name) return;
     let only: string[] | undefined;
     let except: string[] | undefined;
+    if (args[2]?.type === "array_creation_expression") {
+      for (const opt of arrayElements(args[2])) {
+        if (opt.key === "only") only = stringsOf(opt.value);
+        if (opt.key === "except") except = stringsOf(opt.value);
+      }
+    }
     for (let cur = call; cur.parent?.type === "member_call_expression"; cur = cur.parent) {
       if (cur.parent.childForFieldName("object")?.id !== cur.id) break;
       const m = cur.parent.childForFieldName("name")?.text;
@@ -1003,12 +1168,39 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
     }
   }
 
-  /** `#[Route('/path', methods: ['GET'])]` attributes and `@Route(...)` docblock annotations. */
-  function routeSpecs(n: TSNode): RouteSpec[] {
-    const out: RouteSpec[] = [];
-    for (const attr of n.childForFieldName("attributes")?.descendantsOfType("attribute") ?? []) {
-      const name = attr.namedChildren[0]?.text ?? "";
-      if (lastSegment(name) !== "Route") continue;
+  /** Attributes on a declaration with their fully-qualified class names. */
+  function attributesOf(n: TSNode): Array<{ attr: TSNode; fq: string }> {
+    return (n.childForFieldName("attributes")?.descendantsOfType("attribute") ?? []).map(
+      (attr) => ({ attr, fq: fqcnOf(attr.namedChildren[0]?.text ?? "") }),
+    );
+  }
+
+  /**
+   * Route attributes and annotations on a declaration: Symfony `#[Route('/path', methods:
+   * ['GET'])]` and `@Route(...)` docblocks, and spatie/laravel-route-attributes
+   * (`#[Get('users')]`, `#[Route(['put', 'patch'], 'users')]`), which mark `spatie`.
+   */
+  function routeSpecs(n: TSNode): Array<RouteSpec & { spatie?: boolean }> {
+    const out: Array<RouteSpec & { spatie?: boolean }> = [];
+    for (const { attr, fq } of attributesOf(n)) {
+      const short = lastSegment(fq);
+      if (fq.startsWith(SPATIE_ATTRIBUTES)) {
+        const verb = short === "Any" ? "ALL" : httpMethod(short);
+        const pos = positionalArgs(attr);
+        const methods =
+          short === "Route"
+            ? stringsOf(namedArg(attr, "method") ?? pos.shift())
+                .map((m) => httpMethod(m))
+                .filter((m): m is string => !!m)
+            : verb
+              ? [verb]
+              : [];
+        const path = phpString(namedArg(attr, "uri") ?? pos[0]);
+        if (path === undefined) continue;
+        for (const method of methods) out.push({ method, path, spatie: true });
+        continue;
+      }
+      if (short !== "Route") continue;
       const path = phpString(namedArg(attr, "path")) ?? phpString(positionalArgs(attr)[0]);
       if (path === undefined) continue;
       const methods = stringsOf(namedArg(attr, "methods"))
@@ -1024,12 +1216,41 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
 
   /**
    * Symfony: a class-level route is the prefix of its methods' routes, or the route of an
-   * invokable controller (`__invoke`) whose method declares none.
+   * invokable controller (`__invoke`) whose method declares none. Spatie: a class-level
+   * `#[Prefix('admin')]` prefixes the method routes and `#[Resource('photos')]` declares the
+   * CRUD routes of the class's actions.
    */
   function attributeRoutes(cls: TSNode, className: string): void {
     const classSpecs = routeSpecs(cls);
-    const prefix = classSpecs[0]?.path;
+    let prefix = classSpecs[0]?.path;
     const framework = frameworkOf(importedPkgs) ?? "symfony";
+    const line = cls.startPosition.row + 1;
+    for (const { attr, fq } of attributesOf(cls)) {
+      if (!fq.startsWith(SPATIE_ATTRIBUTES)) continue;
+      const short = lastSegment(fq);
+      const pos = positionalArgs(attr);
+      if (short === "Prefix") prefix = phpString(namedArg(attr, "prefix") ?? pos[0]) ?? prefix;
+      if (short !== "Resource") continue;
+      const name = phpString(namedArg(attr, "resource") ?? pos[0]);
+      if (!name) continue;
+      const api = (namedArg(attr, "apiResource") ?? pos[1])?.text === "true";
+      const only = namedArg(attr, "only");
+      const except = namedArg(attr, "except");
+      for (const spec of laravelResource(
+        name,
+        api,
+        only ? stringsOf(only) : undefined,
+        except ? stringsOf(except) : undefined,
+      ))
+        addRoute(
+          spec.method,
+          phpRoutePath(prefix, spec.path),
+          "laravel",
+          line,
+          [symId(rel, `${className}.${spec.action}`)],
+          0.95,
+        );
+    }
     for (const m of cls.childForFieldName("body")?.namedChildren ?? []) {
       if (m?.type !== "method_declaration") continue;
       const mname = m.childForFieldName("name")?.text;
@@ -1041,7 +1262,7 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
             s.method,
             phpRoutePath(s.path),
             framework,
-            cls.startPosition.row + 1,
+            line,
             [symId(rel, `${className}.${mname}`)],
             0.95,
           );
@@ -1051,7 +1272,7 @@ export async function parsePhp(root: string, rel: string, code: string): Promise
         addRoute(
           s.method,
           phpRoutePath(prefix, s.path),
-          framework,
+          s.spatie ? "laravel" : framework,
           m.startPosition.row + 1,
           [symId(rel, `${className}.${mname}`)],
           0.95,

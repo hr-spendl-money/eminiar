@@ -430,6 +430,81 @@ describe("laravel", () => {
       `${ctl("PostController")}.store`,
     ]);
   });
+
+  it("reads view and redirect routes, resources() maps and resource options", async () => {
+    const code = [
+      "<?php",
+      "use App\\Http\\Controllers\\PhotoController;",
+      "use Illuminate\\Support\\Facades\\Route;",
+      "Route::view('/welcome', 'welcome');",
+      "Route::redirect('/here', '/there');",
+      "Route::permanentRedirect('/old', '/new');",
+      "Route::resources(['photos' => PhotoController::class]);",
+      "Route::resource('posts', 'PostController', ['only' => ['show']]);",
+    ].join("\n");
+    const file = "laravel/routes/web.php";
+    const { routes, handlers } = summarise(await parseFile(root, file, code));
+    expect(routes).toEqual([
+      "ALL /here laravel",
+      "ALL /old laravel",
+      "DELETE /photos/:photo laravel",
+      "GET /photos laravel",
+      "GET /photos/:photo laravel",
+      "GET /photos/:photo/edit laravel",
+      "GET /photos/create laravel",
+      "GET /posts/:post laravel",
+      "GET /welcome laravel",
+      "PATCH /photos/:photo laravel",
+      "POST /photos laravel",
+      "PUT /photos/:photo laravel",
+    ]);
+    expect(handlers["route:GET /welcome"]).toEqual([`file:${file}`]);
+    expect(handlers["route:GET /photos/:photo"]).toEqual([`${ctl("PhotoController")}.show`]);
+    expect(handlers["route:GET /posts/:post"]).toEqual([`${ctl("PostController")}.show`]);
+  });
+
+  it("reads spatie route attributes with a class prefix and resource", async () => {
+    const code = [
+      "<?php",
+      "namespace App\\Http\\Controllers;",
+      "",
+      "use Spatie\\RouteAttributes\\Attributes\\Get;",
+      "use Spatie\\RouteAttributes\\Attributes\\Post;",
+      "use Spatie\\RouteAttributes\\Attributes\\Prefix;",
+      "use Spatie\\RouteAttributes\\Attributes\\Resource;",
+      "use Spatie\\RouteAttributes\\Attributes\\Route;",
+      "",
+      "#[Prefix('admin')]",
+      "class AdminController",
+      "{",
+      "    #[Get('users/{user}')]",
+      "    public function show() {}",
+      "",
+      "    #[Post(uri: 'users')]",
+      "    public function store() {}",
+      "",
+      "    #[Route(['put', 'patch'], 'users/{user}')]",
+      "    public function update() {}",
+      "}",
+      "",
+      "#[Resource('tags', apiResource: true, only: ['index'])]",
+      "class TagController",
+      "{",
+      "    public function index() {}",
+      "}",
+    ].join("\n");
+    const file = "laravel/app/Http/Controllers/AdminController.php";
+    const { routes, handlers } = summarise(await parseFile(root, file, code));
+    expect(routes).toEqual([
+      "GET /admin/users/:user laravel",
+      "GET /tags laravel",
+      "PATCH /admin/users/:user laravel",
+      "POST /admin/users laravel",
+      "PUT /admin/users/:user laravel",
+    ]);
+    expect(handlers["route:GET /admin/users/:user"]).toEqual([`sym:${file}#AdminController.show`]);
+    expect(handlers["route:GET /tags"]).toEqual([`sym:${file}#TagController.index`]);
+  });
 });
 
 describe("symfony", () => {
@@ -540,6 +615,15 @@ describe("slim, lumen and codeigniter", () => {
     expect(summarise(await parseFile(root, "lumen/routes/web.php", lumen)).routes).toEqual([
       "GET /lumen http",
       "POST /api/items http",
+    ]);
+    // composer.json's `require` names the framework when no `use` does
+    write(
+      "lumen2/composer.json",
+      JSON.stringify({ require: { "laravel/lumen-framework": "^10.0" } }),
+    );
+    expect(summarise(await parseFile(root, "lumen2/routes/web.php", lumen)).routes).toEqual([
+      "GET /lumen lumen",
+      "POST /api/items lumen",
     ]);
     const ci = [
       "<?php",

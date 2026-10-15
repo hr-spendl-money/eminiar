@@ -8,9 +8,10 @@
  *  - schema-declared routes for moleculer: `aliases` maps of a moleculer-web gateway and
  *    `rest` shorthands on service actions;
  *  - file-based routing (Next.js `app/**\/route.ts` and `pages/api/**`);
- *  - PHP (in `languages/php.ts`): Laravel's `Route::` facade (verbs, `match`, `resource`,
- *    `prefix()->group()`), Symfony `#[Route]` attributes and `@Route` annotations, and
- *    `$app->get()` / `$router->get()` / `$routes->get()` for Slim, Lumen and CodeIgniter 4.
+ *  - PHP (in `languages/php.ts`): Laravel's `Route::` facade (verbs, `match`, `view`,
+ *    `redirect`, `resource(s)`, `prefix()->group()`), Symfony `#[Route]` attributes and
+ *    `@Route` annotations, spatie/laravel-route-attributes, and `$app->get()` /
+ *    `$router->get()` / `$routes->get()` for Slim, Lumen and CodeIgniter 4.
  * Routes are graph nodes (`route:<METHOD> <path>`, kind `route`); the handler symbol
  * gets a `handles` edge to the route and the file a `defines` edge, so impact queries
  * from a handler reach the route and the explorer can list endpoints per file.
@@ -230,6 +231,12 @@ const FRAMEWORK_PKGS: Record<string, string> = {
   Symfony: "symfony",
   Slim: "slim",
   CodeIgniter: "codeigniter",
+  // PHP (composer.json `require`, when no `use` in the file names the framework)
+  "laravel/lumen-framework": "lumen",
+  "laravel/framework": "laravel",
+  "symfony/framework-bundle": "symfony",
+  "slim/slim": "slim",
+  "codeigniter4/framework": "codeigniter",
 };
 
 export function frameworkOf(importedPackages: Iterable<string>): string | undefined {
