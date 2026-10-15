@@ -1,6 +1,6 @@
 {
   "name": "eminiar",
-  "version": "0.5.3",
+  "version": "0.6.1",
   "description": "Local-first context, memory and knowledge-graph plugin for Claude Code. Sandboxed execution, FTS5 + vector search, session continuity, and a code graph — nothing leaves your machine.",
   "type": "module",
   "license": "MIT",
@@ -87,6 +87,7 @@
     "prismjs": "^1.30.0",
     "tree-sitter-go": "^0.23.4",
     "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-php": "^0.24.2",
     "tree-sitter-python": "^0.23.6",
     "tree-sitter-typescript": "^0.23.2",
     "tsup": "^8.5.1",

@@ -70,8 +70,8 @@ eminiar merges four layers. A later layer overrides an earlier one.
 
 | Key | Default | Description |
 |---|---|---|
-| `include` | `**/*.{ts,tsx,js,jsx,mjs,cjs,py,go}` | Files to parse |
-| `exclude` | `node_modules`, `dist`, `build`, `.git`, `coverage`, `*.d.ts`, virtualenvs, `__pycache__`, `site-packages`, `vendor`, `*.min.js` | Files to skip |
+| `include` | `**/*.{ts,tsx,js,jsx,mjs,cjs,py,go,php}` | Files to parse |
+| `exclude` | `node_modules`, `dist`, `build`, `.git`, `coverage`, `*.d.ts`, virtualenvs, `__pycache__`, `site-packages`, `vendor`, `*.min.js`, `*.blade.php` | Files to skip |
 
 ### `git`
 

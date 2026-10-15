@@ -7,7 +7,11 @@
  *    fastify's `route()`;
  *  - schema-declared routes for moleculer: `aliases` maps of a moleculer-web gateway and
  *    `rest` shorthands on service actions;
- *  - file-based routing (Next.js `app/**\/route.ts` and `pages/api/**`).
+ *  - file-based routing (Next.js `app/**\/route.ts` and `pages/api/**`);
+ *  - PHP (in `languages/php.ts`): Laravel's `Route::` facade (verbs, `match`, `view`,
+ *    `redirect`, `resource(s)`, `prefix()->group()`), Symfony `#[Route]` attributes and
+ *    `@Route` annotations, spatie/laravel-route-attributes, and `$app->get()` /
+ *    `$router->get()` / `$routes->get()` for Slim, Lumen and CodeIgniter 4.
  * Routes are graph nodes (`route:<METHOD> <path>`, kind `route`); the handler symbol
  * gets a `handles` edge to the route and the file a `defines` edge, so impact queries
  * from a handler reach the route and the explorer can list endpoints per file.
@@ -111,6 +115,85 @@ export function parseRestShorthand(rest: string | true, actionName: string): Rou
   return [{ method: "ALL", path: joinRoutePath(rest) }];
 }
 
+/** PHP route path from its parts: prefixes joined, Slim/FastRoute `{id:\d+}` and Symfony
+ *  `{id<\d+>}` requirements dropped, `{id}` / `{id?}` rewritten to `:id` / `:id?`. Laravel
+ *  writes paths without the leading slash (`'users'`), which the join adds. */
+export function phpRoutePath(...parts: Array<string | undefined>): string {
+  return normalizeRoutePath(
+    joinRoutePath(...parts)
+      .replace(/\{(\w+)\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, "{$1}")
+      .replace(/\{(\w+)<[^>]*>[^}]*\}/g, "{$1}"),
+  );
+}
+
+/** Laravel `Route::resource` actions: method, path suffix (`{p}` is the parameter), action. */
+const RESOURCE_ACTIONS: Array<[string, string, string]> = [
+  ["GET", "", "index"],
+  ["GET", "/create", "create"],
+  ["POST", "", "store"],
+  ["GET", "/{p}", "show"],
+  ["GET", "/{p}/edit", "edit"],
+  ["PUT", "/{p}", "update"],
+  ["PATCH", "/{p}", "update"],
+  ["DELETE", "/{p}", "destroy"],
+];
+
+/** The route parameter Laravel names after a resource segment (`photos` → `photo`). */
+function resourceParam(segment: string): string {
+  return segment
+    .replace(/-/g, "_")
+    .replace(/ies$/, "y")
+    .replace(/(s|x|z|ch|sh)es$/, "$1")
+    .replace(/([^s])s$/, "$1");
+}
+
+/**
+ * `Route::resource('photos.comments', …)` → its CRUD routes, `action` naming the controller
+ * method. `api` (apiResource) drops `create` and `edit`; `only` / `except` filter by action.
+ * Nested names put the parent's parameter in the path (`/photos/:photo/comments/:comment`).
+ */
+export function laravelResource(
+  name: string,
+  api = false,
+  only?: string[],
+  except?: string[],
+): RouteSpec[] {
+  const segs = name.split(".").filter(Boolean);
+  const last = segs.pop();
+  if (!last) return [];
+  const base = joinRoutePath(...segs.map((s) => `${s}/:${resourceParam(s)}`), last);
+  const param = `:${resourceParam(last)}`;
+  return RESOURCE_ACTIONS.filter(
+    ([, , action]) =>
+      !(api && (action === "create" || action === "edit")) &&
+      (!only || only.includes(action)) &&
+      !except?.includes(action),
+  ).map(([method, suffix, action]) => ({
+    method,
+    path: `${base === "/" ? "" : base}${suffix.replace("{p}", param)}` || "/",
+    action,
+  }));
+}
+
+/**
+ * Doctrine-style `@Route("/path", methods={"GET", "POST"})` annotations in a docblock
+ * (Symfony before attributes). A missing `methods` means any method.
+ */
+export function parseRouteAnnotations(doc: string): RouteSpec[] {
+  const out: RouteSpec[] = [];
+  for (const m of doc.matchAll(/@Route\(([^)]*)\)/g)) {
+    const body = m[1] ?? "";
+    const path = /^\s*"([^"]*)"/.exec(body)?.[1] ?? /\bpath\s*=\s*"([^"]*)"/.exec(body)?.[1];
+    if (path === undefined) continue;
+    const list = /\bmethods\s*=\s*(\{[^}]*\}|"[^"]*")/.exec(body)?.[1] ?? "";
+    const methods = [...list.matchAll(/"([^"]+)"/g)]
+      .map((x) => httpMethod(x[1]!))
+      .filter((x): x is string => !!x);
+    for (const method of methods.length ? methods : ["ALL"]) out.push({ method, path });
+  }
+  return out;
+}
+
 /** Packages whose import marks the registering object as a known framework. */
 const FRAMEWORK_PKGS: Record<string, string> = {
   express: "express",
@@ -143,6 +226,17 @@ const FRAMEWORK_PKGS: Record<string, string> = {
   "github.com/gorilla/mux": "gorilla",
   "github.com/gofiber/fiber": "fiber",
   "github.com/julienschmidt/httprouter": "httprouter",
+  // PHP (top-level namespace of a `use` the project cannot resolve)
+  Illuminate: "laravel",
+  Symfony: "symfony",
+  Slim: "slim",
+  CodeIgniter: "codeigniter",
+  // PHP (composer.json `require`, when no `use` in the file names the framework)
+  "laravel/lumen-framework": "lumen",
+  "laravel/framework": "laravel",
+  "symfony/framework-bundle": "symfony",
+  "slim/slim": "slim",
+  "codeigniter4/framework": "codeigniter",
 };
 
 export function frameworkOf(importedPackages: Iterable<string>): string | undefined {

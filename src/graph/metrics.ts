@@ -9,6 +9,7 @@ export const SYMBOL_KINDS = [
   "class",
   "method",
   "interface",
+  "trait",
   "type",
   "enum",
   "field",

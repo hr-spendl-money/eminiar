@@ -16,13 +16,15 @@ questions without reading whole files:
 
 The graph is built with tree-sitter. No language servers are needed.
 
-**Languages:** TypeScript, JavaScript (`.ts .tsx .js .jsx .mjs .cjs`), Python and Go.
+**Languages:** TypeScript, JavaScript (`.ts .tsx .js .jsx .mjs .cjs`), Python, Go and PHP
+(`.php`; class names resolve to files through `composer.json` PSR-4, PSR-0 and `classmap`
+autoloading, and calls to global helpers reach the `files` composer autoloads).
 
 **Node kinds:**
 
 | Kind | Examples |
 |---|---|
-| Code | `file`, `function`, `class`, `method`, `interface`, `type` |
+| Code | `file`, `function`, `class`, `method`, `interface`, `type`, `trait` and `namespace` (PHP) |
 | Web | `route` (for example `route:GET /users/:id`) |
 | Project | `package`, `person` (git authors), `concept` (curated), `memory` |
 
@@ -33,8 +35,9 @@ The graph is built with tree-sitter. No language servers are needed.
 ### Link pass
 
 After parsing, a link pass resolves edges across files. It follows barrel files and re-exports,
-default exports, Go packages and inherited methods. A call to `user.save()` therefore reaches the
-`save` method of the right class, even through an `index.ts` barrel.
+default exports, Go packages and inherited methods, including methods a PHP class takes from a
+trait. A call to `user.save()` therefore reaches the `save` method of the right class, even
+through an `index.ts` barrel.
 
 ### HTTP routes
 
@@ -48,6 +51,9 @@ Routes become graph nodes, so impact analysis from a handler reaches its endpoin
 | File-based | Next.js `app/**/route.ts` and `pages/api/**` |
 | Decorators | Python route decorators |
 | Router calls | Go: `http.HandleFunc`, `mux.Handle`, `r.GET` style routers |
+| Route facade | Laravel: `Route::get/post/…/match/any`, `view`, `redirect`, `Route::resource` / `apiResource` / `resources([...])`, `prefix()->group()`, `[Controller::class, 'method']` and `'Controller@method'` handlers |
+| Attributes | Symfony `#[Route]` (class prefix and `methods`) and `@Route` annotations; spatie/laravel-route-attributes (`#[Get]`, `#[Route]`, class `#[Prefix]` and `#[Resource]`) |
+| Router calls | PHP: Slim and Lumen `$app->get()` / `$router->get()`, CodeIgniter 4 `$routes->get()`, with groups; the framework comes from `composer.json` `require` when no `use` names it |
 
 ### Metrics
 
