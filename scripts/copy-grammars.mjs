@@ -13,6 +13,7 @@ const files = [
   ["tree-sitter-javascript/tree-sitter-javascript.wasm", "javascript.wasm"],
   ["tree-sitter-python/tree-sitter-python.wasm", "python.wasm"],
   ["tree-sitter-go/tree-sitter-go.wasm", "go.wasm"],
+  ["tree-sitter-php/tree-sitter-php.wasm", "php.wasm"],
 ];
 for (const [src, dst] of files) {
   copyFileSync(join(root, "node_modules", src), join(out, dst));
