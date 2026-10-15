@@ -336,6 +336,7 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
             200,
             graphMap(ctx(), {
               limit: num("limit", 150),
+              kinds: q.has("kinds") ? strList(q.get("kinds")) : undefined,
               coChanges: q.get("cochanges") !== "0",
               pathFilter: str("path"),
             }),
