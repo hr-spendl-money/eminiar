@@ -846,20 +846,32 @@ export class SqliteAdapter implements StorageAdapter {
       ).map((r) => r.id);
       const fileId = `file:${path}`;
       const all = ids.includes(fileId) ? ids : [...ids, fileId];
+      // A `handles` edge belongs to the file that registers the route, not to the handler's
+      // file (a Laravel routes file pointing at controller methods): it is re-derived when
+      // the route's file is re-parsed and survives a re-parse of the handler's file.
+      this.db
+        .prepare(
+          "DELETE FROM graph_edges WHERE source = ? AND kind = 'handles' AND dst IN (SELECT id FROM graph_nodes WHERE source = ? AND path = ? AND kind = 'route')",
+        )
+        .run(source, source, path);
+      const foreignRoute =
+        "AND NOT (kind = 'handles' AND dst IN (SELECT id FROM graph_nodes WHERE kind = 'route' AND path IS NOT ?))";
       // Only edges that originate in this file are re-derived by a re-parse; edges
       // from other files pointing here must survive (they are owned by those files).
       for (let i = 0; i < all.length; i += 400) {
         const slice = all.slice(i, i + 400);
         const ph = slice.map(() => "?").join(",");
         this.db
-          .prepare(`DELETE FROM graph_edges WHERE source = ? AND src IN (${ph})`)
-          .run(source, ...slice);
+          .prepare(`DELETE FROM graph_edges WHERE source = ? AND src IN (${ph}) ${foreignRoute}`)
+          .run(source, ...slice, path);
       }
       // Every symbol of the file shares the `sym:<path>#` prefix, so this also drops
       // edges whose source node never existed or no longer does (e.g. from a parser bug).
       this.db
-        .prepare("DELETE FROM graph_edges WHERE source = ? AND src LIKE ? ESCAPE '\\'")
-        .run(source, `sym:${path.replace(/[%_\\]/g, "\\$&")}#%`);
+        .prepare(
+          `DELETE FROM graph_edges WHERE source = ? AND src LIKE ? ESCAPE '\\' ${foreignRoute}`,
+        )
+        .run(source, `sym:${path.replace(/[%_\\]/g, "\\$&")}#%`, path);
       if (opts.keepFile) {
         this.db
           .prepare("DELETE FROM graph_nodes WHERE source = ? AND path = ? AND kind != 'file'")
