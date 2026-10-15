@@ -6,6 +6,7 @@ import { classifyHref, dashboardHref } from "../markdown/links.js";
 import { Markdown } from "../markdown/Markdown.js";
 import { navigate } from "../router.js";
 import { cls, day, fmt } from "../util.js";
+import { KnowledgeGalaxy } from "./KnowledgeGalaxy.js";
 
 const KIND_COLORS: Record<string, string> = {
   decision: "#7c3aed",
@@ -217,6 +218,14 @@ function Detail({
           <button type="button" class="sm" onClick={rename}>
             rename
           </button>
+          <button
+            type="button"
+            class="sm"
+            title="this memory in the knowledge graph"
+            onClick={() => navigate("memory", { tab: "graph", focus: `memory:${name}` })}
+          >
+            graph
+          </button>
           <button type="button" class="sm danger" onClick={remove}>
             delete
           </button>
@@ -404,8 +413,20 @@ export function Memory({ params }: { params: Record<string, string> }): JSX.Elem
     if (params.name) {
       setSel(params.name);
       setCreating(false);
+      // "Open memory" from the graph lands on the list that shows it.
+      setTab((t) =>
+        t === "graph" || t === "record"
+          ? params.name!.startsWith("decision/")
+            ? "decision"
+            : "all"
+          : t,
+      );
     }
   }, [params.name]);
+  // A hash-only change (#/memory?tab=graph&focus=…) does not remount the view.
+  useEffect(() => {
+    if (params.tab) setTab(params.tab);
+  }, [params.tab]);
   useEffect(() => {
     if (q.data?.gitignored)
       toast(`.gitignore keeps ${q.data.dir} out of git; memories stay local`, true);
@@ -436,6 +457,7 @@ export function Memory({ params }: { params: Record<string, string> }): JSX.Elem
     ["all", "All"],
     ...(d?.kinds ?? []).map((k) => [k, k] as [string, string]),
     ["record", "Decision record"],
+    ["graph", "Graph"],
   ];
   return (
     <div class="page">
@@ -445,9 +467,12 @@ export function Memory({ params }: { params: Record<string, string> }): JSX.Elem
         onChange={(t) => {
           setTab(t);
           if (t !== "decision") setStatus("");
+          if (t === "graph" || params.tab) navigate("memory", { tab: t });
         }}
       />
-      {tab === "record" ? (
+      {tab === "graph" ? (
+        <KnowledgeGalaxy scope="memory" focus={params.focus} />
+      ) : tab === "record" ? (
         <DecisionRecord
           rows={(d?.memories ?? []).filter(
             (m) => m.kind === "decision" && (m.status ?? "accepted") === "accepted",

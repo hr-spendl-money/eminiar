@@ -581,3 +581,28 @@ export interface RiskUi {
     origins: CommitRowUi[];
   }>;
 }
+
+/** `/api/knowledge` (src/ui/knowledge-api.ts): memories and docs and what they touch. */
+export interface KnowledgeNodeUi extends VisNode {
+  group: "memory" | "doc" | "hub" | "code";
+  seed?: boolean;
+  missing?: boolean;
+  /** Memory kind or doc category id. */
+  sub?: string;
+  status?: string;
+  tags?: string[];
+  provider?: string;
+  detail?: string;
+}
+export interface KnowledgeEdgeUi extends VisEdge {
+  derived?: boolean;
+}
+export interface KnowledgeUi {
+  scope: "memory" | "docs" | "all";
+  focus: string | null;
+  nodes: KnowledgeNodeUi[];
+  edges: KnowledgeEdgeUi[];
+  truncated: boolean;
+  total: number;
+  counts: { nodes: Record<string, number>; edges: Record<string, number> };
+}

@@ -64,6 +64,7 @@ import {
   historyRiskPayload,
   historySymbolPayload,
 } from "./history-api.js";
+import { knowledgePayload, scopeOf as knowledgeScope } from "./knowledge-api.js";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -325,6 +326,18 @@ export async function serve(opts: { port: number; open: boolean; root?: string }
         if (!provider) return json(res, 400, { error: "provider required" });
         return json(res, 200, await docsResolvePayload(ctx(), provider));
       }
+
+      // --- knowledge galaxy (memories + docs) ----------------------------------------
+      if (p === "/api/knowledge")
+        return json(
+          res,
+          200,
+          knowledgePayload(ctx(), {
+            scope: knowledgeScope(q.get("scope")),
+            focus: str("focus"),
+            limit: num("limit", 300),
+          }),
+        );
 
       // --- graph -------------------------------------------------------------------
       if (p === "/api/graph") {

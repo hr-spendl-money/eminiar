@@ -7,6 +7,7 @@ import {
   type LocalCandidate,
   type ProviderCandidate,
 } from "./discover.js";
+import { syncDocsGraphQuietly } from "./graph.js";
 import {
   clearSyncState,
   type DocSourceInput,
@@ -230,6 +231,7 @@ export async function addDocSources(
   const names = [...out.added, ...out.updated];
   if (opts.sync !== false && names.length)
     out.sync = await syncSources(ctx, db, names, { force: opts.force });
+  else if (names.length) syncDocsGraphQuietly(ctx, db);
   return out;
 }
 
@@ -241,6 +243,7 @@ export function removeDocSource(
   const removed = removeSource(ctx, name);
   const documents = db.deleteDocumentsBySource(docsTag(name));
   clearSyncState(db, name);
+  if (removed) syncDocsGraphQuietly(ctx, db);
   return { removed, documents };
 }
 

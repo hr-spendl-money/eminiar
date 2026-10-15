@@ -14,7 +14,12 @@ import type { ProjectContext } from "../context.js";
 import { memoryId } from "../graph/ids.js";
 import { indexContent } from "../index/indexer.js";
 import type { StorageAdapter } from "../storage/adapter.js";
-import { MEMORY_STATUSES, type MemoryRow, type MemoryStatus } from "../storage/types.js";
+import {
+  type GraphEdge,
+  MEMORY_STATUSES,
+  type MemoryRow,
+  type MemoryStatus,
+} from "../storage/types.js";
 import { type MemoryMeta, parseMemoryFile, serializeMemoryFile } from "./frontmatter.js";
 
 export { MEMORY_STATUSES };
@@ -122,6 +127,31 @@ export function normalizeRelated(ids: string[]): string[] {
   return [...out];
 }
 
+/**
+ * The graph node a `related:` entry points at. Memories name other memories as
+ * `mem:<name>` (the prefix their bodies link with too) while the node is
+ * `memory:<name>`; without this the edge targeted a node that never exists.
+ */
+export function relatedTarget(id: string): string {
+  return id.startsWith("mem:") ? memoryId(id.slice(4)) : id;
+}
+
+/** `mem:<name>` anywhere in a body: bare, in backticks or as a markdown link target. */
+const MEM_LINK_RE = /(?<![A-Za-z0-9_./-])mem:([a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?)/g;
+
+/**
+ * Memory names a body links to with `mem:<name>`. A trailing `.` or `-` ends a
+ * sentence rather than the name; invalid names and the memory itself are dropped.
+ */
+export function memoryLinks(body: string, self?: string | undefined): string[] {
+  const out = new Set<string>();
+  for (const m of body.matchAll(MEM_LINK_RE)) {
+    const name = m[1]!.replace(/[.-]+$/, "");
+    if (name && name !== self && isValidName(name)) out.add(name);
+  }
+  return [...out];
+}
+
 export interface MemoryFile {
   name: string;
   kind: string;
@@ -143,44 +173,41 @@ function writeMemoryFile(ctx: ProjectContext, name: string, meta: MemoryMeta, bo
   writeFileSync(abs, serializeMemoryFile(meta, `\n${body.trim()}\n`));
 }
 
-function syncGraph(
-  db: StorageAdapter,
-  name: string,
-  rel: string,
-  kind: string,
-  tags: string[],
-  related: string[],
-  supersedes?: string | undefined,
-): void {
+interface GraphInput {
+  kind: string;
+  tags: string[];
+  related: string[];
+  status?: string | undefined;
+  supersedes?: string | undefined;
+  body: string;
+}
+
+function syncGraph(db: StorageAdapter, name: string, rel: string, g: GraphInput): void {
+  const self = memoryId(name);
   db.graphDeleteForPath("curated", rel);
   db.graphUpsertNodes([
     {
-      id: memoryId(name),
+      id: self,
       kind: "memory",
       name,
       path: rel,
       source: "curated",
-      meta: { kind, tags },
+      meta: { kind: g.kind, tags: g.tags, ...(g.status ? { status: g.status } : {}) },
     },
   ]);
-  const edges = related.map((dst) => ({
-    src: memoryId(name),
-    dst,
-    kind: "mentions",
-    source: "curated" as const,
-    confidence: 1,
-    weight: 1,
-  }));
-  if (supersedes) {
-    edges.push({
-      src: memoryId(name),
-      dst: memoryId(supersedes),
-      kind: "supersedes",
-      source: "curated",
-      confidence: 1,
-      weight: 1,
-    });
-  }
+  const edges: GraphEdge[] = [];
+  const seen = new Set<string>();
+  const push = (dst: string, kind: string) => {
+    const key = `${kind}|${dst}`;
+    if (dst === self || seen.has(key)) return;
+    seen.add(key);
+    edges.push({ src: self, dst, kind, source: "curated", confidence: 1, weight: 1 });
+  };
+  for (const id of g.related) push(relatedTarget(id), "mentions");
+  // `mem:` references in the body connect memories too, as their own edge kind so a
+  // header's deliberate `related:` list stays distinguishable from passing references.
+  for (const other of memoryLinks(g.body, name)) push(memoryId(other), "links");
+  if (g.supersedes) push(memoryId(g.supersedes.replace(/^mem(?:ory)?:/, "")), "supersedes");
   if (edges.length) db.graphUpsertEdges(edges);
 }
 
@@ -287,7 +314,7 @@ function syncFile(
     status,
     supersedes,
   });
-  syncGraph(db, name, rel, kind, tags, related, supersedes);
+  syncGraph(db, name, rel, { kind, tags, related, status, supersedes, body });
   return { changed: true, row: db.memoryGetByName(name)! };
 }
 

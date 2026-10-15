@@ -100,11 +100,13 @@ export function impact(
     frontier = next;
     if (!frontier.length) break;
   }
-  // Memories (.eminiar/memories) that mention the node or one of its symbols are
-  // context to re-read before changing it, so they surface alongside dependents.
-  for (const e of db.graphEdgesTo(start, ["mentions"])) {
+  // Memories (.eminiar/memories) that mention the node or one of its symbols, and
+  // documentation sources (.eminiar/docs.json) about it, are context to re-read
+  // before changing it, so they surface alongside dependents.
+  for (const e of db.graphEdgesTo(start, ["mentions", "documents"])) {
     const via = e.dst === root.id ? root.name : e.dst.replace(/^sym:[^#]*#/, "");
-    add(e.src, 0.5 * e.confidence, 1, `memory mentions ${via}`);
+    const who = e.kind === "documents" ? "doc documents" : "memory mentions";
+    add(e.src, 0.5 * e.confidence, 1, `${who} ${via}`);
   }
   if (opts.includeGit !== false) {
     const file = toFile(root.id);

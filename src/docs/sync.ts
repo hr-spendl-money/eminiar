@@ -3,6 +3,7 @@ import { kickEmbedding } from "../embeddings/queue.js";
 import { type Fetched, fetchMarkdown } from "../fetch/fetcher.js";
 import { indexContent, indexPath } from "../index/indexer.js";
 import type { StorageAdapter } from "../storage/adapter.js";
+import { syncDocsGraphQuietly } from "./graph.js";
 import { type DocSource, docsTag, readManifest, setSyncState } from "./manifest.js";
 import { looksLikeSpec, specToMarkdown } from "./specs.js";
 
@@ -288,6 +289,8 @@ export async function syncSources(
       });
   }
   for (const src of wanted) out.push(await syncSource(ctx, db, src, opts));
+  // Pages just (re)indexed may name different code files: refresh the doc nodes' edges.
+  syncDocsGraphQuietly(ctx, db);
   return out;
 }
 

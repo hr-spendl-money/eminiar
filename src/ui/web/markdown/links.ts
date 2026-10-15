@@ -27,6 +27,7 @@ export function classifyHref(href: string): LinkTarget {
   const rest = m[2]!;
   switch (scheme) {
     case "mem":
+    case "memory": // the graph node id, accepted in `related:` too
       return rest ? { kind: "memory", name: rest } : { kind: "text" };
     case "file":
     case "sym": {

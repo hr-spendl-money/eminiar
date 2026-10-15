@@ -26,11 +26,16 @@ autoloading, and calls to global helpers reach the `files` composer autoloads).
 |---|---|
 | Code | `file`, `function`, `class`, `method`, `interface`, `type`, `trait` and `namespace` (PHP) |
 | Web | `route` (for example `route:GET /users/:id`) |
-| Project | `package`, `person` (git authors), `concept` (curated), `memory` |
+| Project | `package`, `person` (git authors), `concept` (curated), `memory`, `doc` (a source in `.eminiar/docs.json`) |
 
 **Main edge kinds:** `imports`, `reexports`, `exports`, `defines`, `calls`, `references`,
 `extends`, `implements`, `handles` (handler → route), `co_changes` (git coupling), `mentions`
-(memory → code), `authored` (person → file).
+(memory → code or memory, from `related:`), `links` (memory → memory, from `mem:` in the body),
+`supersedes` (decision → decision), `documents` (doc → the package it covers or the code files
+its local pages name), `authored` (person → file).
+
+`em_graph_impact` lists the memories that mention a file and the doc sources that document it
+next to its dependents.
 
 ### Link pass
 
