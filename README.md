@@ -76,9 +76,9 @@ subagent briefs. **Claude does not have to remember to look.**
 
 ### 🕸️ Code knowledge graph — a map before an edit
 
-tree-sitter parses TypeScript, JavaScript, Python and Go into files, symbols, imports, calls,
+tree-sitter parses TypeScript, JavaScript, Python, Go and PHP into files, symbols, imports, calls,
 references, inheritance and HTTP routes (Express, Fastify, Koa, hapi, Hono, Moleculer, Next.js,
-Python decorator routes and Go routers). eminiar
+Python decorator routes, Go routers, Laravel, Symfony and Slim). eminiar
 adds fan-in, complexity, churn, a hotspot score, module clusters, import cycles and git co-change
 coupling. Ask *"what breaks if I change this?"* with `em_graph_impact`.
 

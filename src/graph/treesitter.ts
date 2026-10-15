@@ -3,6 +3,7 @@ import type { GraphEdge, GraphNode } from "../storage/types.js";
 import { fileId, pkgId, symId } from "./ids.js";
 import { parseGo } from "./languages/go.js";
 import { type Grammar, getParser, grammarFor } from "./languages/parser.js";
+import { parsePhp } from "./languages/php.js";
 import { parsePython } from "./languages/python.js";
 import { packageName, resolveImport } from "./resolve.js";
 import {
@@ -117,6 +118,7 @@ export async function parseFile(root: string, rel: string, code: string): Promis
   if (!grammar) return { nodes: [], edges: [], exports: [] };
   if (grammar === "python") return parsePython(root, rel, code);
   if (grammar === "go") return parseGo(root, rel, code);
+  if (grammar === "php") return parsePhp(root, rel, code);
   const p = await getParser(grammar);
   const tree = p.parse(code);
   if (!tree) return { nodes: [], edges: [], exports: [] };

@@ -128,7 +128,7 @@ export const postToolUse: HookHandler = (input) => {
     if (
       d.category === "files" &&
       typeof d.payload.path === "string" &&
-      /\.(m?[jt]sx?|c[jt]s|py|pyi|go)$/.test(d.payload.path)
+      /\.(m?[jt]sx?|c[jt]s|py|pyi|go|php)$/.test(d.payload.path)
     ) {
       db.reindexQueuePush(d.payload.path, String(d.payload.action ?? "edit"));
     }

@@ -4,7 +4,7 @@ import type { Language as TSLanguage, Node as TSNode, Parser as TSParser } from 
 import type { GraphEdge } from "../../storage/types.js";
 import { pluginRoot } from "../../version.js";
 
-export type Grammar = "typescript" | "tsx" | "javascript" | "python" | "go";
+export type Grammar = "typescript" | "tsx" | "javascript" | "python" | "go" | "php";
 
 export function grammarFor(path: string): Grammar | undefined {
   switch (extname(path).toLowerCase()) {
@@ -24,6 +24,8 @@ export function grammarFor(path: string): Grammar | undefined {
       return "python";
     case ".go":
       return "go";
+    case ".php":
+      return "php";
     default:
       return undefined;
   }

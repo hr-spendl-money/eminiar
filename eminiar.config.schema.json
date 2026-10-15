@@ -111,7 +111,8 @@
             "**/*.mjs",
             "**/*.cjs",
             "**/*.py",
-            "**/*.go"
+            "**/*.go",
+            "**/*.php"
           ],
           "type": "array",
           "items": {
@@ -131,7 +132,8 @@
             "**/__pycache__/**",
             "**/site-packages/**",
             "**/vendor/**",
-            "**/*.min.js"
+            "**/*.min.js",
+            "**/*.blade.php"
           ],
           "type": "array",
           "items": {

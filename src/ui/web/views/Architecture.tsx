@@ -37,6 +37,7 @@ const LANG_COLORS: Record<string, string> = {
   javascript: "#d97706",
   python: "#16a34a",
   go: "#0d9488",
+  php: "#6366f1",
   other: "#6b7280",
 };
 function heat(score: number): string {
