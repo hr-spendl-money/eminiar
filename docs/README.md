@@ -23,4 +23,4 @@
 - **[CLI](cli.md)**: the `eminiar` command
 - **[Configuration](configuration.md)**: every key with its default, and environment variables
 - **[Troubleshooting](troubleshooting.md)**: common problems and fixes
-- **[Development](development.md)**: build, test, benchmark, project layout
+- **[Development](development.md)**: build, test, benchmark, project layout, releasing
