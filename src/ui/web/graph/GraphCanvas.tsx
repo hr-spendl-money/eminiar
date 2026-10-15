@@ -67,6 +67,8 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<Layout | null>(null);
   const viewRef = useRef<View>({ k: 1, x: 0, y: 0 });
+  /** The user zoomed or panned since the layout was built: auto-fit must leave the view alone. */
+  const userViewRef = useRef(false);
   const hoverRef = useRef<SimNode | null>(null);
   const dragRef = useRef<{
     node?: SimNode | undefined;
@@ -237,7 +239,9 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
         ? hierarchy(props.nodes, props.edges)
         : layout(props.nodes, props.edges, prev);
     layoutRef.current = l;
+    userViewRef.current = false;
     let fitted = false;
+    let settled = false;
     let ticks = 0;
     if (mode === "hierarchy") {
       fitView();
@@ -248,12 +252,17 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       if (ticks % 2 === 0 || l.sim.alpha() < 0.05) draw();
       if (!fitted && (ticks === 30 || l.sim.alpha() < 0.3)) {
         fitted = true;
-        fitView();
+        if (!userViewRef.current) fitView();
       }
     });
+    // Fit once more when the first layout settles (it keeps spreading after the early
+    // fit). Later "end"s come from node drags restarting the simulation and must not
+    // move the camera, and neither may any fit after the user zoomed or panned.
     l.sim.on("end", () => {
+      if (settled) return;
+      settled = true;
       fitted = true;
-      fitView();
+      if (!userViewRef.current) fitView();
     });
     return () => l.sim.stop();
   }, [nodeKey, edgeKey, mode]);
@@ -351,6 +360,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
           draw();
         }
       } else {
+        if (d.moved) userViewRef.current = true;
         viewRef.current = { ...viewRef.current, x: d.vx + dx, y: d.vy + dy };
         draw();
       }
@@ -385,6 +395,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const canvas = canvasRef.current!;
     const b = canvas.getBoundingClientRect();
     const v = viewRef.current;
+    userViewRef.current = true;
     const f = e.deltaY > 0 ? 0.9 : 1.1;
     const k = Math.max(0.05, Math.min(8, v.k * f));
     const mx = e.clientX - b.left - b.width / 2;

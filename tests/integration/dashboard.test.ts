@@ -258,6 +258,24 @@ describe("dashboard", () => {
     );
     expect(expand.root).toBe("file:src/b.ts");
     expect(expand.nodes.length).toBe(2);
+
+    // The project map draws only the selected edge kinds, lifting symbol edges to files.
+    type MapResult = {
+      nodes: Array<{ id: string }>;
+      edges: Array<{ src: string; dst: string; kind: string }>;
+    };
+    const map = (kinds: string) => j<MapResult>(`/api/graph?mode=map&kinds=${kinds}`);
+    expect((await map("imports")).edges).toEqual([
+      expect.objectContaining({ src: "file:src/a.ts", dst: "file:src/b.ts", kind: "imports" }),
+    ]);
+    expect((await map("calls")).edges).toEqual([
+      expect.objectContaining({ src: "file:src/a.ts", dst: "file:src/b.ts", kind: "calls" }),
+    ]);
+    expect((await map("defines")).edges).toEqual([]);
+    const none = await map("none");
+    expect(none.edges).toEqual([]);
+    expect(none.nodes.length).toBe(2);
+
     const path = await j<{ edges: unknown[] }>("/api/graph?mode=path&node=src/a.ts&to=src/b.ts");
     expect(path.edges.length).toBe(1);
     const behavior = await j<{ callees: Array<{ node: { id: string } }> }>(

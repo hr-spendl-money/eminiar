@@ -123,16 +123,19 @@ export function Galaxy({ params }: { params: Record<string, string> }): JSX.Elem
     let alive = true;
     setLoading(true);
     setPathEdges(undefined);
+    // An empty param is dropped by `api()` and the server then draws every kind;
+    // "none" matches no edge kind, so all chips off really means no edges.
+    const kinds = state.kinds.join(",") || "none";
     const req = state.node
       ? api<GraphResult>("/api/graph", {
           mode: "expand",
           node: state.node,
           direction: state.direction,
-          kinds: state.kinds.join(","),
+          kinds,
           depth: state.depth,
           limit: 400,
         })
-      : api<GraphResult>("/api/graph", { mode: "map", limit: 200 });
+      : api<GraphResult>("/api/graph", { mode: "map", kinds, limit: 200 });
     req
       .then((g) => {
         if (!alive) return;
@@ -180,6 +183,7 @@ export function Galaxy({ params }: { params: Record<string, string> }): JSX.Elem
   const ins = sel ? graph!.edges.filter((e) => e.dst === sel.id) : [];
   const outs = sel ? graph!.edges.filter((e) => e.src === sel.id) : [];
   const label = (id: string) => graph?.nodes.find((n) => n.id === id)?.label ?? id;
+  const fileCount = graph?.nodes.filter((n) => n.kind === "file").length ?? 0;
   const toggleKind = (k: string) =>
     go({
       ...state,
@@ -228,6 +232,8 @@ export function Galaxy({ params }: { params: Record<string, string> }): JSX.Elem
         </button>
         <select
           value={state.direction}
+          disabled={!state.node}
+          title={state.node ? undefined : "pick a node to follow edges in one direction"}
           onChange={(e) =>
             go({ ...state, direction: (e.target as HTMLSelectElement).value as Direction })
           }
@@ -240,7 +246,7 @@ export function Galaxy({ params }: { params: Record<string, string> }): JSX.Elem
           <button
             type="button"
             class="sm"
-            disabled={state.depth <= 1}
+            disabled={!state.node || state.depth <= 1}
             onClick={() => go({ ...state, depth: state.depth - 1 })}
           >
             −
@@ -251,7 +257,7 @@ export function Galaxy({ params }: { params: Record<string, string> }): JSX.Elem
           <button
             type="button"
             class="sm"
-            disabled={state.depth >= 4}
+            disabled={!state.node || state.depth >= 4}
             onClick={() => go({ ...state, depth: state.depth + 1 })}
           >
             +1
@@ -297,7 +303,7 @@ export function Galaxy({ params }: { params: Record<string, string> }): JSX.Elem
           {loading ? (
             <Spinner />
           ) : graph ? (
-            `${graph.nodes.length} nodes · ${graph.edges.length} edges${graph.truncated ? " · truncated" : ""}${graph.total && graph.total > graph.nodes.length ? ` · top ${graph.nodes.length} of ${graph.total} files` : ""}`
+            `${graph.nodes.length} nodes · ${graph.edges.length} edges${graph.truncated ? " · truncated" : ""}${graph.total && graph.total > fileCount ? ` · top ${fileCount} of ${graph.total} files` : ""}`
           ) : (
             ""
           )}
