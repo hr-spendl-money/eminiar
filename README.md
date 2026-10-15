@@ -13,6 +13,15 @@
 
 [Quick start](#quick-start) · [Features](#what-you-get) · [How it works](docs/how-it-works.md) · [Tools](docs/tools.md) · [Docs](docs/README.md)
 
+<br/>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-explore-dark.webp">
+  <img alt="The eminiar dashboard: source explorer with file impact, dependents and linked memories" src="docs/images/dashboard-explore-light.webp" width="900">
+</picture>
+
+<sub>The local dashboard: source, file impact and the memories linked to the file.</sub>
+
 </div>
 
 ---
@@ -89,6 +98,13 @@ split into one section per endpoint, so a lookup returns the exact operation.
 
 `eminiar ui` opens a local web app with token savings, a source explorer with impact analysis, a
 graph "galaxy", an architecture map, a history explorer, a memory editor and a docs manager.
+
+| | |
+|:---:|:---:|
+| [<img alt="Galaxy: the knowledge graph around a file" src="docs/images/dashboard-galaxy-dark.webp" width="430">](docs/dashboard.md#galaxy) | [<img alt="History: commits classified by kind, with the branch graph" src="docs/images/dashboard-history-dark.webp" width="430">](docs/dashboard.md#history) |
+| **Galaxy:** the knowledge graph | **History:** classified commits and fix tracing |
+| [<img alt="Memory: a decision with its linked files" src="docs/images/dashboard-memory-dark.webp" width="430">](docs/dashboard.md#memory) | [<img alt="Hotspots: fan-in, churn and complexity per file" src="docs/images/dashboard-hotspots-dark.webp" width="430">](docs/dashboard.md#architecture) |
+| **Memory:** decisions linked to code | **Hotspots:** where change is risky |
 
 ## What Claude sees
 

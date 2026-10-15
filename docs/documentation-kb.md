@@ -131,3 +131,5 @@ Add your own catalogue entries with `docs.catalog` in `eminiar.config.json`. Eac
 
 The **Docs** tab shows sources, pages and sync state. It also has a discovery screen with
 checkboxes and a docs-only search. See [Dashboard](dashboard.md#docs).
+
+![The Docs discovery screen: local docs and catalogue providers, each with a checkbox](images/dashboard-docs-dark.webp)

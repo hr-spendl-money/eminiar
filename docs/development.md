@@ -20,6 +20,7 @@ claude --plugin-dir "$PWD"   # run Claude Code with this checkout as the plugin
 | `npm run lint` / `lint:fix` | Biome |
 | `npm run validate` | `claude plugin validate .` |
 | `npm run bench` | Hot-path benchmark (see below) |
+| `npm run screenshots` | Regenerate the dashboard screenshots in `docs/images` (see below) |
 
 ## Project layout
 
@@ -62,3 +63,23 @@ npm run build && npm run bench    # drives dist/server.js over stdio, like Claud
 
 - Run the benchmark **alone**, not at the same time as tests.
 - Compare before and after: build `origin/main` and your branch, and run both.
+
+## Screenshots
+
+The images in `docs/images` are captured from a live dashboard. Regenerate them after a UI
+change:
+
+```sh
+npm run build
+eminiar ui --port 7341 --no-open &              # this project, in another terminal
+npm run screenshots                             # all of them
+npm run screenshots -- galaxy history           # only some
+```
+
+- The script drives headless Chrome through the DevTools Protocol. It needs no extra
+  dependencies. Set `CHROME=/path/to/chrome` if Chrome is not found.
+- Home directories (`/Users/<name>`, `/home/<name>`) are replaced with `~` before each capture.
+  **Check the images before you commit them.**
+- Output is WebP at 1.5× scale (2160 px wide), about 100–250 KB per image.
+- The views, routes and clicks are listed in `SHOTS` at the top of
+  `scripts/capture-screenshots.mjs`.

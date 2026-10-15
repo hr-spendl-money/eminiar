@@ -10,6 +10,8 @@ questions without reading whole files:
 - *Which routes exist, and which functions handle them?*
 - *Which files are fragile?*
 
+![The graph two layers around src/session/recall.ts in the dashboard Galaxy view](images/dashboard-galaxy-dark.webp)
+
 ## What is in the graph
 
 The graph is built with tree-sitter. No language servers are needed.
@@ -59,6 +61,8 @@ Each node gets:
 | **Hotspot score** | 40% fan-in + 40% churn + 20% complexity, each normalised on a log scale |
 
 A high hotspot score marks a place worth a careful look. It is not a quality grade.
+
+![Hotspot table: fan-in, commits in 90 days, complexity and score per file](images/dashboard-hotspots-dark.webp)
 
 The graph also has **module clusters**, **import cycles** and **co-change coupling** (files that
 change together in git, even without an import between them).
@@ -151,6 +155,8 @@ flowchart LR
 4. **Compare branches.** Branches get ahead/behind counts and merge state against the base.
 
 Commit messages are also indexed for `em_search` (source `git`).
+
+![History, Risk and lessons tab: bug-prone files with reasons, and changes that later needed fixing](images/dashboard-history-risk-dark.webp)
 
 ### When Claude sees it
 

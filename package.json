@@ -47,7 +47,8 @@
     "validate": "claude plugin validate .",
     "prepack": "npm run build",
     "build:ui": "tsup --config tsup.web.config.ts",
-    "dev:ui": "tsup --config tsup.web.config.ts --watch"
+    "dev:ui": "tsup --config tsup.web.config.ts --watch",
+    "screenshots": "node scripts/capture-screenshots.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",

@@ -70,6 +70,8 @@ Restart Claude Code after you install.
    eminiar ui                # the local dashboard
    ```
 
+   ![The dashboard Overview: tokens saved per day and per tool](images/dashboard-overview-dark.webp)
+
 ## Team setup
 
 eminiar stores shared knowledge in your repository, so a team gets the same memories and

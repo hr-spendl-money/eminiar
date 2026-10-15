@@ -41,6 +41,10 @@ memory call imports the changes again. To force it, run `em_reindex {scope: "mem
 
 **Commit the directory.** Teammates then share the same decisions and constraints.
 
+The dashboard **Memory** tab browses and edits the same files:
+
+![A decision memory in the dashboard, rendered as markdown with its tags and linked files](images/dashboard-memory-dark.webp)
+
 ## How memories are used
 
 Each memory file is:
