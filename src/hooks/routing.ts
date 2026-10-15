@@ -4,6 +4,7 @@ import type { ProjectContext } from "../context.js";
 import { getContext } from "../context.js";
 import { type DocSource, readManifestAt } from "../docs/manifest.js";
 import { renderProjectBrief } from "../session/brief.js";
+import { memoriesForFile, recallForText, recordShown } from "../session/recall.js";
 import { serverAlive } from "../session/server-alive.js";
 import type { StorageAdapter } from "../storage/adapter.js";
 import { getStorage } from "../storage/index.js";
@@ -170,11 +171,24 @@ export function suggest(
         reason:
           "subagents should prefer em_execute / em_batch_execute / em_search over Bash, Read and Grep",
         prefixPrompt:
-          "Use the eminiar tools (em_execute, em_batch_execute, em_execute_file, em_fetch_and_index, em_search) instead of Bash/Read/Grep/WebFetch whenever output may be large; return only derived answers.\n\n",
+          'Use the eminiar tools (em_execute, em_batch_execute, em_execute_file, em_fetch_and_index, em_search) instead of Bash/Read/Grep/WebFetch whenever output may be large; return only derived answers. Check em_recall {query} for project decisions and constraints before proposing changes, and em_docs {action:"lookup", query} before WebFetch/WebSearch for anything the project depends on.\n\n',
       };
     default:
       return undefined;
   }
+}
+
+/** Project-relative path of a tool's file_path, or undefined when it is outside the project. */
+function projectRel(ctx: ProjectContext, fp: string): string | undefined {
+  if (!fp) return undefined;
+  let abs = resolve(ctx.root, fp);
+  try {
+    abs = realpathSync(abs); // the project root is a real path; tool paths may go through symlinks
+  } catch {
+    // missing file (a Write creating it, or Read about to report it)
+  }
+  const rel = relative(ctx.root, abs).split("\\").join("/");
+  return rel.startsWith("..") ? undefined : rel;
 }
 
 /**
@@ -190,21 +204,40 @@ function graphContext(ctx: ProjectContext, input: HookInput): string | undefined
       return pattern ? symbolHints(db, pattern) : undefined;
     }
     if (input.tool_name === "Read") {
-      const fp = String(input.tool_input?.file_path ?? "");
-      if (!fp) return undefined;
-      let abs = resolve(ctx.root, fp);
-      try {
-        abs = realpathSync(abs); // the project root is a real path; tool paths may go through symlinks
-      } catch {
-        // missing file: let Read report it
-      }
-      const rel = relative(ctx.root, abs).split("\\").join("/");
-      return rel.startsWith("..") ? undefined : coverageHint(db, rel);
+      const rel = projectRel(ctx, String(input.tool_input?.file_path ?? ""));
+      return rel ? coverageHint(db, rel) : undefined;
     }
   } catch {
     // hints are optional
   }
   return undefined;
+}
+
+const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "Write"]);
+
+/**
+ * Memories linked to the file about to be read or edited, once per context window.
+ * Independent of the routing mode: switching routing off should not hide decisions.
+ */
+function fileMemoryContext(ctx: ProjectContext, input: HookInput): string | undefined {
+  if (!ctx.config.recall.onFile || !FILE_TOOLS.has(input.tool_name ?? "")) return undefined;
+  try {
+    const rel = projectRel(ctx, String(input.tool_input?.file_path ?? ""));
+    if (!rel) return undefined;
+    const db = getStorage(ctx, { vectors: false });
+    const sessionId = input.session_id || undefined;
+    const r = memoriesForFile(db, rel, { sessionId });
+    if (!r.text) return undefined;
+    if (sessionId) recordShown(db, sessionId, r.keys);
+    return r.text;
+  } catch {
+    return undefined;
+  }
+}
+
+function joinHints(...hints: Array<string | undefined>): string | undefined {
+  const h = hints.filter(Boolean);
+  return h.length ? h.join("\n") : undefined;
 }
 
 function withContext(
@@ -225,17 +258,20 @@ function withContext(
   };
 }
 
-export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefined => {
+export const preToolUse: HookHandler = async (
+  input: HookInput,
+): Promise<HookOutput | undefined> => {
   if (!input.tool_name || !input.tool_input) return undefined;
   const ctx = getContext(input.cwd);
+  const memo = fileMemoryContext(ctx, input);
   const mode = effectiveRoutingMode(ctx.config);
-  if (mode === "off") return undefined;
+  if (mode === "off") return withContext(undefined, memo);
   const coexisting = contextModeInstalled() && ctx.config.routing.deferToContextMode;
   // context-mode already routes these; adding a second opinion only confuses the model.
   if (coexisting && ["Bash", "Read", "Grep", "WebFetch"].includes(input.tool_name))
-    return undefined;
+    return withContext(undefined, memo);
 
-  const hint = graphContext(ctx, input);
+  const hint = joinHints(graphContext(ctx, input), memo);
   const s = suggest(input.tool_name, input.tool_input, ctx.root);
   if (!s) return withContext(undefined, hint);
   if (s.annotateOnly) return withContext(annotate(s), hint);
@@ -250,7 +286,7 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
           permissionDecision: "allow",
           updatedInput: {
             ...input.tool_input,
-            prompt: s.prefixPrompt + briefFor(ctx) + prompt,
+            prompt: s.prefixPrompt + (await briefFor(ctx, prompt)) + prompt,
           },
         },
       };
@@ -280,21 +316,37 @@ export const preToolUse: HookHandler = (input: HookInput): HookOutput | undefine
     };
   }
   // Annotate mode: subagents get the project brief as context since their prompt is untouched.
-  const extra = s.prefixPrompt ? [briefFor(ctx).trim(), hint].filter(Boolean).join("\n") : hint;
-  return withContext(annotate(s), extra || undefined);
+  const extra = s.prefixPrompt
+    ? joinHints((await briefFor(ctx, String(input.tool_input.prompt ?? ""))).trim(), hint)
+    : hint;
+  return withContext(annotate(s), extra);
 };
 
-/** The project brief for a subagent prompt (empty when the graph is not built yet). */
-function briefFor(ctx: ProjectContext): string {
+/**
+ * The project brief for a subagent prompt, plus the memories and doc pages matching its
+ * task: a subagent starts cold and never sees the parent's SessionStart or prompt recall.
+ */
+async function briefFor(ctx: ProjectContext, task: string): Promise<string> {
+  const parts: string[] = [];
   try {
     const db = getStorage(ctx, { vectors: false });
     const brief = renderProjectBrief(ctx, db, 1200);
-    return brief
-      ? `Project brief (eminiar):\n${brief}\nVerify structure with em_symbols / em_graph_impact before reading files; check em_index_status before claiming something is unused.\n\n`
-      : "";
+    if (brief)
+      parts.push(
+        `Project brief (eminiar):\n${brief}\nVerify structure with em_symbols / em_graph_impact before reading files; check em_index_status before claiming something is unused.`,
+      );
+    const { recall } = ctx.config;
+    if (recall.onAgent && task) {
+      const r = await recallForText(db, task, {
+        maxMemories: recall.maxMemories,
+        maxDocs: recall.maxDocs,
+      });
+      if (r.text) parts.push(r.text);
+    }
   } catch {
-    return "";
+    // the brief is optional
   }
+  return parts.length ? `${parts.join("\n\n")}\n\n` : "";
 }
 
 function annotate(s: Suggestion, note = ""): HookOutput {

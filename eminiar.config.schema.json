@@ -204,6 +204,36 @@
         }
       }
     },
+    "recall": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "onPrompt": {
+          "default": true,
+          "type": "boolean"
+        },
+        "onFile": {
+          "default": true,
+          "type": "boolean"
+        },
+        "onAgent": {
+          "default": true,
+          "type": "boolean"
+        },
+        "maxMemories": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "maxDocs": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      }
+    },
     "docs": {
       "default": {},
       "type": "object",

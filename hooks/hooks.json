@@ -16,7 +16,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Read|Grep|Glob|WebFetch|WebSearch|Agent|Task",
+        "matcher": "Bash|Read|Edit|MultiEdit|Write|Grep|Glob|WebFetch|WebSearch|Agent|Task",
         "hooks": [
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/em-hook\"", "timeout": 5 }
         ]

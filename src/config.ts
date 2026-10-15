@@ -108,6 +108,18 @@ export const ConfigSchema = z.object({
       dir: z.string().default(".eminiar/memories"),
     })
     .prefault({}),
+  recall: z
+    .object({
+      /** Inject the memories and doc pages that match each prompt (UserPromptSubmit). */
+      onPrompt: z.boolean().default(true),
+      /** Surface memories linked to a file when it is read or edited (PreToolUse). */
+      onFile: z.boolean().default(true),
+      /** Brief subagents with the memories and doc pages that match their task. */
+      onAgent: z.boolean().default(true),
+      maxMemories: z.number().int().min(0).max(10).default(3),
+      maxDocs: z.number().int().min(0).max(10).default(2),
+    })
+    .prefault({}),
   docs: z
     .object({
       /** Project-relative manifest of documentation sources (`em_docs`); commit it. */

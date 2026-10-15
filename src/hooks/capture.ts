@@ -8,6 +8,7 @@ import {
 } from "../capture/classify.js";
 import { getContext } from "../context.js";
 import { indexContent } from "../index/indexer.js";
+import { recallForText, recordShown } from "../session/recall.js";
 import { globalDb } from "../stats/global.js";
 import type { StorageAdapter } from "../storage/adapter.js";
 import { getStorage } from "../storage/index.js";
@@ -66,12 +67,30 @@ function open(input: HookInput): { db: StorageAdapter; root: string; sessionId: 
   return { db, root: ctx.root, sessionId };
 }
 
-export const userPromptSubmit: HookHandler = (input) => {
+export const userPromptSubmit: HookHandler = async (input) => {
   if (!input.prompt?.trim()) return undefined;
   const { db, sessionId } = open(input);
   db.sessionUpsert({ id: sessionId, last_prompt: clip(input.prompt, 600) });
   persist(db, sessionId, withPriority(sessionId, classifyPrompt(input.prompt)));
-  return undefined;
+  // Hand Claude the memories and doc pages this prompt touches, so it does not have
+  // to remember to ask em_recall / em_docs first.
+  const { recall } = getContext(input.cwd).config;
+  if (!recall.onPrompt) return undefined;
+  try {
+    const r = await recallForText(db, input.prompt, {
+      maxMemories: recall.maxMemories,
+      maxDocs: recall.maxDocs,
+      sessionId,
+    });
+    if (!r.text) return undefined;
+    recordShown(db, sessionId, r.keys);
+    return {
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: r.text },
+    };
+  } catch {
+    // recall is best effort; never block a prompt on it
+    return undefined;
+  }
 };
 
 /** 3+ calls with identical input in the last 30 → iteration loop (recorded once per key). */
