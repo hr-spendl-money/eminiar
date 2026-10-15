@@ -27,8 +27,9 @@ import {
 import { type LaneRow, layoutLanes } from "../history/lanes.js";
 import { navigate } from "../router.js";
 import { ago, cls, day, fmt } from "../util.js";
+import { HistoryGraph } from "./HistoryGraph.js";
 
-type Tab = "timeline" | "branches" | "files" | "risk";
+type Tab = "timeline" | "branches" | "files" | "graph" | "risk";
 
 // --- small pieces -----------------------------------------------------------------------
 
@@ -298,6 +299,13 @@ function CommitDetail({
         <div class="row" style={{ marginTop: 8 }}>
           <button type="button" class="sm" onClick={() => setDiff(diff === false ? null : false)}>
             {diff === false ? "Show diff" : "Hide diff"}
+          </button>
+          <button
+            type="button"
+            class="sm"
+            onClick={() => navigate("history", { tab: "graph", focus: `commit:${c.sha}` })}
+          >
+            Graph
           </button>
           {d.branches.length ? (
             <span class="muted small">
@@ -813,6 +821,19 @@ function BranchDetail({
             {b.merged ? "merged" : `+${b.ahead} / -${b.behind}`}
           </Tag>
         ) : null}
+        <span class="spacer" />
+        <button
+          type="button"
+          class="sm"
+          onClick={() =>
+            navigate("history", {
+              tab: "graph",
+              focus: `branch:${b.remote ? b.name.replace(/^[^/]+\//, "") : b.name}`,
+            })
+          }
+        >
+          Graph
+        </button>
       </div>
       {b.isDefault ? (
         <div class="muted small" style={{ marginTop: 6 }}>
@@ -1022,6 +1043,13 @@ function FileDetail({
                 onClick={() => navigate("galaxy", { node: `file:${path}` })}
               >
                 Galaxy
+              </button>
+              <button
+                type="button"
+                class="sm"
+                onClick={() => navigate("history", { tab: "graph", focus: `file:${path}` })}
+              >
+                History graph
               </button>
             </div>
           </>
@@ -1329,6 +1357,7 @@ export function History({ params }: { params: Record<string, string> }): JSX.Ele
             ["timeline", "Timeline"],
             ["branches", "Branches"],
             ["files", "Files"],
+            ["graph", "Graph"],
             ["risk", "Risk & lessons"],
           ]}
           value={tab}
@@ -1346,6 +1375,7 @@ export function History({ params }: { params: Record<string, string> }): JSX.Ele
       {tab === "timeline" && <Timeline ov={d} params={params} selected={sel} onSelect={setSel} />}
       {tab === "branches" && <Branches ov={d} params={params} onSelectCommit={pick} />}
       {tab === "files" && <Files params={params} onSelectCommit={pick} />}
+      {tab === "graph" && <HistoryGraph focus={params.focus} />}
       {tab === "risk" && <Risk ov={d} onSelectCommit={pick} />}
     </div>
   );

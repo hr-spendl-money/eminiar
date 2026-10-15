@@ -59,7 +59,8 @@ export function isKind(k: unknown): k is MemoryKind {
   return typeof k === "string" && (MEMORY_KINDS as readonly string[]).includes(k);
 }
 
-function memoriesRel(ctx: ProjectContext): string {
+/** Project-relative memories directory (forward slashes, no trailing slash). */
+export function memoriesRel(ctx: ProjectContext): string {
   return ctx.config.memories.dir.replace(/^\.\//, "").replace(/\/+$/, "");
 }
 

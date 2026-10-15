@@ -1006,6 +1006,10 @@ svg.glyph {
   overflow: hidden;
   background: var(--card);
 }
+/* The History tab's graph sits under the stats row and sub-tabs. */
+.kgalaxy.hgraph {
+  height: calc(100vh - 300px);
+}
 .kgalaxy .kbody {
   flex: 1;
   min-height: 0;

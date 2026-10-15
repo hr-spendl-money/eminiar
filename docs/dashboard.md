@@ -60,6 +60,23 @@ The interactive version of [`em_history`](knowledge-graph.md#git-history).
 - Branch comparison.
 - The lessons the history teaches: changes that later needed fixing.
 
+The **Graph** tab links the history to the knowledge base. Branches (hexagons) point at their
+own commits (triangles, coloured by commit kind), commits at the files they changed, and those
+files at the memories (diamonds) and doc sources (squares) about them. A commit that wrote or
+edited a memory points straight at it (`records`), a fix points at the commit its removed lines
+trace back to (`fixes`), and a merged branch points at the default branch (`merged_into`).
+
+A branch's commits are its first-parent chain down to the default branch's first-parent line.
+That way a branch merged with a merge commit keeps its commits after main moves on. Branches
+deleted after merging are recovered from the merge subjects (`Merge pull request #12 from
+owner/feature/x`, `Merge branch 'x'`).
+
+Without a focus the tab draws the newest branches (5, 8, 15 or 30). Pick a branch from the
+menu, or press **Focus here** on any node, to re-centre on a branch, commit, file, memory or doc.
+The **Graph** buttons on a commit, a branch and a file's history open the same view. Chips
+switch node and edge kinds off, and a commit-kind menu keeps only feats, fixes, and so on.
+Lockfiles are left out, and each commit shows its 12 biggest file changes.
+
 ### Memory
 
 ![Memory: a decision rendered as markdown, with tags and linked files](images/dashboard-memory-dark.webp)
