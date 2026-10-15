@@ -1,7 +1,12 @@
 /**
- * HTTP route detection shared by the language parsers. Two sources:
+ * HTTP route detection shared by the language parsers. Four sources:
  *  - call-based registration (`app.get("/users/:id", handler)`) for express, fastify,
- *    koa-router, hono and similar `method(path, ...handlers)` APIs;
+ *    koa-router (including named routes and `prefix`), hono, restify and similar
+ *    `method(path, ...handlers)` APIs;
+ *  - config-object registration (`server.route({ method, path, handler })`) for hapi and
+ *    fastify's `route()`;
+ *  - schema-declared routes for moleculer: `aliases` maps of a moleculer-web gateway and
+ *    `rest` shorthands on service actions;
  *  - file-based routing (Next.js `app/**\/route.ts` and `pages/api/**`).
  * Routes are graph nodes (`route:<METHOD> <path>`, kind `route`); the handler symbol
  * gets a `handles` edge to the route and the file a `defines` edge, so impact queries
@@ -19,6 +24,93 @@ export const ROUTE_METHODS = new Set([
   "all",
 ]);
 
+/** JS-only verb aliases (`router.del` in koa-router and restify). Kept out of ROUTE_METHODS
+ *  because Go's `http.Header.Del` would otherwise look like a registration. */
+const JS_METHOD_ALIASES: Record<string, string> = { del: "DELETE" };
+
+/** `"get"` → `"GET"`, `"del"` → `"DELETE"`, `"*"` → `"ALL"`; undefined when it is not a verb. */
+export function httpMethod(token: string): string | undefined {
+  const t = token.trim();
+  if (t === "*") return "ALL";
+  const lower = t.toLowerCase();
+  if (ROUTE_METHODS.has(lower)) return lower.toUpperCase();
+  return JS_METHOD_ALIASES[lower];
+}
+
+/** Join URL path segments the way routers mount them: one slash between, none trailing. */
+export function joinRoutePath(...parts: Array<string | undefined>): string {
+  const segs = parts
+    .filter((p): p is string => typeof p === "string" && p.length > 0)
+    .map((p) => p.replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  return `/${segs.join("/")}`;
+}
+
+/** hapi's `{id}`, `{id?}`, `{rest*}` and `{p*2}` params rewritten to the `:id` / `*rest` style
+ *  the rest of the graph uses, so the same endpoint has one id whichever framework wrote it. */
+export function normalizeRoutePath(path: string): string {
+  return path
+    .replace(/\{([^}]+?)\*\d*\}/g, "*$1")
+    .replace(/\{([^}]+?)\?\}/g, ":$1?")
+    .replace(/\{([^}]+?)\}/g, ":$1");
+}
+
+export interface RouteSpec {
+  method: string;
+  path: string;
+  /** moleculer: the `service.action` the route dispatches to, when the alias names one. */
+  action?: string | undefined;
+}
+
+/** moleculer-web `REST <path>` expands to the five CRUD aliases plus PATCH. */
+const REST_ALIASES: Array<[string, string, string]> = [
+  ["GET", "", "list"],
+  ["GET", "/:id", "get"],
+  ["POST", "", "create"],
+  ["PUT", "/:id", "update"],
+  ["PATCH", "/:id", "patch"],
+  ["DELETE", "/:id", "remove"],
+];
+
+/**
+ * One key of a moleculer-web `aliases` map: `"GET users/:id"`, `"REST users"` or a bare
+ * `"users"` (any method). `target` is the alias value when it is an action-name string
+ * (`"users.get"`); for REST it is the service name the six actions hang off.
+ */
+export function parseAliasKey(key: string, target?: string): RouteSpec[] {
+  const parts = key.trim().split(/\s+/);
+  let verb = parts.length > 1 ? parts[0]! : undefined;
+  const rawPath = parts.length > 1 ? parts.slice(1).join(" ") : parts[0]!;
+  if (verb?.toUpperCase() === "REST") {
+    const base = joinRoutePath(rawPath);
+    return REST_ALIASES.map(([method, suffix, action]) => ({
+      method,
+      path: base === "/" ? suffix || "/" : `${base}${suffix}`,
+      action: target ? `${target}.${action}` : undefined,
+    }));
+  }
+  if (verb && !httpMethod(verb)) {
+    // not a verb: the whole key is the path (paths never contain spaces in practice)
+    verb = undefined;
+  }
+  const method = verb ? httpMethod(verb)! : "ALL";
+  return [{ method, path: joinRoutePath(rawPath), action: target }];
+}
+
+/**
+ * A moleculer action's `rest` shorthand: `"GET /:id"`, `"/users"` (any method) or `true`
+ * (any method at `/<action>`). Object and array forms are handled by the parser, which
+ * has the literal values.
+ */
+export function parseRestShorthand(rest: string | true, actionName: string): RouteSpec[] {
+  if (rest === true) return [{ method: "ALL", path: joinRoutePath(actionName) }];
+  const parts = rest.trim().split(/\s+/);
+  if (parts.length > 1 && httpMethod(parts[0]!)) {
+    return [{ method: httpMethod(parts[0]!)!, path: joinRoutePath(parts.slice(1).join(" ")) }];
+  }
+  return [{ method: "ALL", path: joinRoutePath(rest) }];
+}
+
 /** Packages whose import marks the registering object as a known framework. */
 const FRAMEWORK_PKGS: Record<string, string> = {
   express: "express",
@@ -28,6 +120,9 @@ const FRAMEWORK_PKGS: Record<string, string> = {
   "@koa/router": "koa",
   "koa-router": "koa",
   "@hapi/hapi": "hapi",
+  hapi: "hapi",
+  moleculer: "moleculer",
+  "moleculer-web": "moleculer",
   restify: "restify",
   polka: "polka",
   "@nestjs/common": "nest",

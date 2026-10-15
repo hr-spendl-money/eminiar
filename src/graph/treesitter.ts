@@ -5,7 +5,18 @@ import { parseGo } from "./languages/go.js";
 import { type Grammar, getParser, grammarFor } from "./languages/parser.js";
 import { parsePython } from "./languages/python.js";
 import { packageName, resolveImport } from "./resolve.js";
-import { fileRoutes, frameworkOf, ROUTE_METHODS, routeId, routePathFromLiteral } from "./routes.js";
+import {
+  fileRoutes,
+  frameworkOf,
+  httpMethod,
+  joinRoutePath,
+  normalizeRoutePath,
+  parseAliasKey,
+  parseRestShorthand,
+  type RouteSpec,
+  routeId,
+  routePathFromLiteral,
+} from "./routes.js";
 
 export { type Grammar, grammarFor };
 
@@ -44,6 +55,44 @@ const BRANCH_TYPES = [
   "ternary_expression",
   "binary_expression",
 ];
+
+/** `"users"` / `'users'` / `` `users` `` (no substitutions) → `users`; anything else undefined. */
+function stringValue(n: TSNode): string | undefined {
+  if (n.type !== "string" && n.type !== "template_string") return undefined;
+  const m = /^(['"`])([^'"`$]*)\1$/.exec(n.text.trim());
+  return m ? m[2] : undefined;
+}
+
+/** The literal name of an object key: `foo`, `"foo"` or `'foo'`; computed keys are skipped. */
+function propertyKey(k: TSNode): string | undefined {
+  if (k.type === "property_identifier" || k.type === "identifier" || k.type === "number")
+    return k.text;
+  return stringValue(k);
+}
+
+/**
+ * `{ a: x, "b": y, c() {}, d }` → key → value node. Methods and shorthand properties map
+ * to their own node so handler attribution can treat them like inline functions.
+ */
+function objectEntries(obj: TSNode): Map<string, TSNode> {
+  const out = new Map<string, TSNode>();
+  for (const c of obj.namedChildren) {
+    if (!c) continue;
+    if (c.type === "pair") {
+      const k = c.childForFieldName("key");
+      const v = c.childForFieldName("value");
+      const key = k ? propertyKey(k) : undefined;
+      if (key && v) out.set(key, v);
+    } else if (c.type === "method_definition") {
+      const nameNode = c.childForFieldName("name");
+      const key = nameNode ? propertyKey(nameNode) : undefined;
+      if (key) out.set(key, c);
+    } else if (c.type === "shorthand_property_identifier") {
+      out.set(c.text, c);
+    }
+  }
+  return out;
+}
 
 function complexityOf(n: TSNode): number {
   let c = 1;
@@ -90,6 +139,8 @@ export async function parseFile(root: string, rel: string, code: string): Promis
   const instanceOf = new Map<string, { id: string; confidence: number }>();
   /** bare package names imported by this file (framework detection). */
   const importedPkgs = new Set<string>();
+  /** router variable → mount prefix (`new Router({ prefix })`, `router.prefix("/api")`). */
+  const routerPrefix = new Map<string, string>();
   /** calls/references collected in pass 2, keyed (src, dst, kind) so repeats aggregate. */
   const refs = new Map<string, Ref>();
   let defaultExport: string | undefined;
@@ -104,10 +155,26 @@ export async function parseFile(root: string, rel: string, code: string): Promis
     else collectDecls(stmt, undefined, stmt.type === "export_statement");
   }
   // Pass 2: calls, identifier references and route registrations inside declarations.
+  collectPrefixCalls(tree.rootNode);
   for (const stmt of tree.rootNode.namedChildren) {
     if (stmt && stmt.type !== "import_statement") walkRefs(stmt);
   }
   flushRefs();
+  moleculerRoutes(tree.rootNode);
+
+  /** `router.prefix("/api")` applies to routes registered before and after it, so it is
+   *  collected before pass 2 rather than in document order. */
+  function collectPrefixCalls(rootNode: TSNode): void {
+    for (const call of rootNode.descendantsOfType("call_expression")) {
+      const fn = call.childForFieldName("function");
+      if (fn?.type !== "member_expression") continue;
+      if (fn.childForFieldName("property")?.text !== "prefix") continue;
+      const obj = fn.childForFieldName("object");
+      const arg = call.childForFieldName("arguments")?.namedChildren[0];
+      const p = arg ? routePathFromLiteral(arg.text) : undefined;
+      if (obj?.type === "identifier" && p) routerPrefix.set(obj.text, p);
+    }
+  }
   for (const r of fileRoutes(rel, exportsList, defaultExport)) {
     addRoute(r.method, r.path, r.framework, 1, [symId(rel, r.handler)], 0.95);
   }
@@ -290,8 +357,32 @@ export async function parseFile(root: string, rel: string, code: string): Promis
         const k = value && /function|arrow_function/.test(value.type) ? "function" : "variable";
         addSym(parentName ? `${parentName}.${name}` : name, k, d, exported && !parentName);
         noteInstance(d);
+        noteRequire(d, name);
+        noteRouterPrefix(d, name);
       }
     }
+  }
+
+  /** `const x = require("pkg")`: a CommonJS import, linked like an `import` statement. */
+  function noteRequire(declarator: TSNode, name: string): void {
+    const value = declarator.childForFieldName("value");
+    if (value?.type !== "call_expression") return;
+    if (value.childForFieldName("function")?.text !== "require") return;
+    const arg = value.childForFieldName("arguments")?.namedChildren[0];
+    const spec = arg ? stringValue(arg) : undefined;
+    if (!spec) return;
+    linkModule(declarator, spec, "imports", [name]);
+  }
+
+  /** `const router = new Router({ prefix: "/api" })` (koa-router): remember the prefix. */
+  function noteRouterPrefix(declarator: TSNode, name: string): void {
+    const value = declarator.childForFieldName("value");
+    if (value?.type !== "new_expression") return;
+    const opts = value.childForFieldName("arguments")?.namedChildren[0];
+    if (opts?.type !== "object") return;
+    const prefix = objectEntries(opts).get("prefix");
+    const p = prefix ? routePathFromLiteral(prefix.text) : undefined;
+    if (p) routerPrefix.set(name, p);
   }
 
   /** `const x = new Y()` anywhere: remember x's class so `x.method()` resolves to `Y.method`. */
@@ -417,6 +508,7 @@ export async function parseFile(root: string, rel: string, code: string): Promis
     line: number,
     handlers: string[],
     confidence: number,
+    extra: Record<string, unknown> = {},
   ): void {
     const id = routeId(method, path);
     if (!nodes.some((n) => n.id === id)) {
@@ -428,7 +520,7 @@ export async function parseFile(root: string, rel: string, code: string): Promis
         startLine: line,
         endLine: line,
         source: "tree-sitter",
-        meta: { method, route: path, framework },
+        meta: { method, route: path, framework, ...extra },
       });
       pushEdge({ src: fid, dst: id, kind: "defines", source: "tree-sitter" });
     }
@@ -437,39 +529,254 @@ export async function parseFile(root: string, rel: string, code: string): Promis
     }
   }
 
-  /** `app.get("/path", h1, h2)` → a route node handled by h1/h2 (or the enclosing symbol). */
-  function routeFromCall(call: TSNode): void {
-    const fn = call.childForFieldName("function");
-    if (fn?.type !== "member_expression") return;
-    const prop = fn.childForFieldName("property")?.text;
-    if (!prop || !ROUTE_METHODS.has(prop)) return;
-    const args = call.childForFieldName("arguments")?.namedChildren ?? [];
-    const first = args[0];
-    if (!first) return;
-    const path = routePathFromLiteral(first.text);
-    if (!path) return;
-    const framework = frameworkOf(importedPkgs) ?? "http";
-    const caller = enclosing(call);
+  /**
+   * The symbols a list of handler expressions refers to: identifiers and members resolve
+   * through the scope; inline functions (and object methods) attribute to the enclosing
+   * symbol or the file; arrays (`[auth, handler]`) are flattened. Confidence drops as the
+   * attribution gets vaguer; with nothing resolvable the enclosing symbol is a 0.5 guess.
+   */
+  function handlersOf(
+    exprs: Array<TSNode | undefined>,
+    caller: string | undefined,
+  ): { handlers: string[]; confidence: number } {
     const handlers: string[] = [];
     let confidence = 0.9;
-    for (const a of args.slice(1)) {
-      if (!a) continue;
-      if (a.type === "identifier") {
+    const self = caller ? symId(rel, caller) : fid;
+    const visit = (a: TSNode | undefined): void => {
+      if (!a) return;
+      if (a.type === "identifier" || a.type === "shorthand_property_identifier") {
         const t = scope.get(a.text);
         if (t?.id.startsWith("sym:")) handlers.push(t.id);
       } else if (a.type === "member_expression") {
         const t = callTarget(a, caller);
         if (t?.id.startsWith("sym:")) handlers.push(t.id);
-      } else if (/function|arrow_function/.test(a.type)) {
-        handlers.push(caller ? symId(rel, caller) : fid);
-        confidence = 0.7;
+      } else if (/function|arrow_function|method_definition/.test(a.type)) {
+        handlers.push(self);
+        confidence = Math.min(confidence, 0.7);
+      } else if (a.type === "array") {
+        for (const el of a.namedChildren) visit(el ?? undefined);
       }
-    }
+    };
+    for (const e of exprs) visit(e);
     if (!handlers.length) {
-      handlers.push(caller ? symId(rel, caller) : fid);
+      handlers.push(self);
       confidence = 0.5;
     }
-    addRoute(prop.toUpperCase(), path, framework, call.startPosition.row + 1, handlers, confidence);
+    return { handlers: [...new Set(handlers)], confidence };
+  }
+
+  /**
+   * `app.get("/path", h1, h2)` → a route node handled by h1/h2 (or the enclosing symbol).
+   * Also koa-router named routes (`router.get("name", "/path", h)`), the `del` alias,
+   * router prefixes, and `server.route({...})` config objects (hapi, fastify).
+   */
+  function routeFromCall(call: TSNode): void {
+    const fn = call.childForFieldName("function");
+    if (fn?.type !== "member_expression") return;
+    const prop = fn.childForFieldName("property")?.text;
+    if (!prop) return;
+    const obj = fn.childForFieldName("object");
+    const args = (call.childForFieldName("arguments")?.namedChildren ?? []).filter(
+      (a): a is TSNode => !!a,
+    );
+    const first = args[0];
+    if (!first) return;
+    if (prop === "route" && (first.type === "object" || first.type === "array")) {
+      routesFromConfig(first, call);
+      return;
+    }
+    const method = httpMethod(prop);
+    if (!method) return;
+    let path = routePathFromLiteral(first.text);
+    let rest = args.slice(1);
+    if (!path && first.type === "string" && args[1]) {
+      // koa-router named route: the name comes first, the path second
+      path = routePathFromLiteral(args[1].text);
+      rest = args.slice(2);
+    }
+    if (!path) return;
+    if (obj?.type === "identifier" && routerPrefix.has(obj.text)) {
+      path = joinRoutePath(routerPrefix.get(obj.text), path);
+    }
+    const framework = frameworkOf(importedPkgs) ?? "http";
+    const caller = enclosing(call);
+    const { handlers, confidence } = handlersOf(rest, caller);
+    addRoute(method, path, framework, call.startPosition.row + 1, handlers, confidence);
+  }
+
+  /**
+   * `server.route({ method: "GET", path: "/users/{id}", handler })` and
+   * `server.route([{...}, {...}])` (hapi; fastify spells the path `url` and may nest the
+   * handler under `options`/`config`). `method` may be a string, `"*"` or an array.
+   */
+  function routesFromConfig(arg: TSNode, call: TSNode): void {
+    const configs = arg.type === "array" ? arg.namedChildren : [arg];
+    const framework = frameworkOf(importedPkgs) ?? "http";
+    const caller = enclosing(call);
+    for (const cfg of configs) {
+      if (cfg?.type !== "object") continue;
+      const entries = objectEntries(cfg);
+      const methodNode = entries.get("method");
+      const pathNode = entries.get("path") ?? entries.get("url");
+      if (!methodNode || !pathNode) continue;
+      const rawPath = stringValue(pathNode);
+      if (!rawPath?.startsWith("/")) continue;
+      const methods = methodsOf(methodNode);
+      if (!methods.length) continue;
+      const options = entries.get("options") ?? entries.get("config");
+      const handlerNode =
+        entries.get("handler") ??
+        (options?.type === "object" ? objectEntries(options).get("handler") : undefined);
+      const { handlers, confidence } = handlersOf([handlerNode], caller);
+      const path = normalizeRoutePath(rawPath);
+      for (const m of methods) {
+        addRoute(m, path, framework, cfg.startPosition.row + 1, handlers, confidence);
+      }
+    }
+  }
+
+  /** `"GET"`, `"*"` or `["GET", "POST"]` → upper-case methods; unknown verbs are dropped. */
+  function methodsOf(n: TSNode): string[] {
+    const lits = n.type === "array" ? n.namedChildren.filter((c): c is TSNode => !!c) : [n];
+    const out: string[] = [];
+    for (const lit of lits) {
+      const s = stringValue(lit);
+      const m = s ? httpMethod(s) : undefined;
+      if (m) out.push(m);
+    }
+    return out;
+  }
+
+  /**
+   * moleculer routes are declared as data, often in files that import nothing:
+   *  - moleculer-web gateway: `settings.routes[].aliases` maps `"GET users/:id"` keys to
+   *    action names, handlers or arrays of middleware; the route's `path` and the
+   *    gateway's `settings.path` prefix every alias; `REST users` expands to CRUD.
+   *  - service schema: `actions.<name>.rest` (`"GET /:id"`, `{ method, path }`, `true`)
+   *    under the base path `settings.rest` (default `/<version>/<service name>`).
+   */
+  function moleculerRoutes(rootNode: TSNode): void {
+    const framework = "moleculer";
+    const fromImport = frameworkOf(importedPkgs) === framework;
+    for (const pair of rootNode.descendantsOfType("pair")) {
+      const key = pair.childForFieldName("key");
+      const value = pair.childForFieldName("value");
+      if (!key || value?.type !== "object") continue;
+      const k = propertyKey(key);
+      if (k === "aliases") {
+        const group = pair.parent?.type === "object" ? objectEntries(pair.parent) : undefined;
+        const looksLikeGateway =
+          fromImport ||
+          !!group?.has("path") ||
+          !!group?.has("whitelist") ||
+          !!group?.has("mappingPolicy") ||
+          !!group?.has("bodyParsers");
+        if (!looksLikeGateway) continue;
+        const groupPath = group ? literalOf(group.get("path")) : undefined;
+        const gateway = pair.parent ? enclosingSettings(pair.parent, "routes") : undefined;
+        const base = joinRoutePath(gateway ? literalOf(gateway.get("path")) : undefined, groupPath);
+        for (const [aliasKey, target] of objectEntries(value)) {
+          const action = target.type === "array" ? lastString(target) : stringValue(target);
+          for (const spec of parseAliasKey(aliasKey, action)) {
+            emitSpec(spec, base, target, pair, framework);
+          }
+        }
+      } else if (k === "actions") {
+        const schema = pair.parent?.type === "object" ? objectEntries(pair.parent) : undefined;
+        if (!schema) continue;
+        const settings = schema.get("settings");
+        const settingsRest =
+          settings?.type === "object" ? literalOf(objectEntries(settings).get("rest")) : undefined;
+        const name = literalOf(schema.get("name"));
+        const version = schema.get("version")?.text.replace(/^['"`]|['"`]$/g, "");
+        const base =
+          settingsRest ??
+          (name
+            ? joinRoutePath(version && /^\d+$/.test(version) ? `v${version}` : version, name)
+            : undefined);
+        for (const [actionName, def] of objectEntries(value)) {
+          if (def.type !== "object") continue;
+          const action = objectEntries(def);
+          const restNode = action.get("rest");
+          if (!restNode) continue;
+          const handler = action.get("handler") ?? def;
+          for (const spec of restSpecs(restNode, actionName)) {
+            const b = spec.basePath ?? base;
+            emitSpec(spec, b, handler, def, framework, name ? `${name}.${actionName}` : undefined);
+          }
+        }
+      }
+    }
+  }
+
+  function emitSpec(
+    spec: RouteSpec,
+    base: string | undefined,
+    handlerNode: TSNode,
+    at: TSNode,
+    framework: string,
+    actionName?: string,
+  ): void {
+    const caller = enclosing(at);
+    const { handlers, confidence } = handlersOf([handlerNode], caller);
+    const action = spec.action ?? actionName;
+    addRoute(
+      spec.method,
+      joinRoutePath(base, spec.path),
+      framework,
+      at.startPosition.row + 1,
+      handlers,
+      confidence,
+      action ? { action } : {},
+    );
+  }
+
+  /** `rest: "GET /:id"`, `rest: true`, `rest: { method, path, basePath }` or an array of those. */
+  function restSpecs(n: TSNode, actionName: string): Array<RouteSpec & { basePath?: string }> {
+    if (n.type === "array") {
+      return n.namedChildren.flatMap((c) => (c ? restSpecs(c, actionName) : []));
+    }
+    if (n.type === "true") return parseRestShorthand(true, actionName);
+    const s = stringValue(n);
+    if (s) return parseRestShorthand(s, actionName);
+    if (n.type !== "object") return [];
+    const e = objectEntries(n);
+    const method = literalOf(e.get("method"));
+    const path = literalOf(e.get("path"));
+    const basePath = literalOf(e.get("basePath"));
+    if (!path) return [];
+    const spec: RouteSpec & { basePath?: string } = {
+      method: (method && httpMethod(method)) || "ALL",
+      path: joinRoutePath(path),
+    };
+    if (basePath) spec.basePath = basePath;
+    return [spec];
+  }
+
+  /** The nearest ancestor object literal that has a `<key>` entry (e.g. the gateway `settings`). */
+  function enclosingSettings(n: TSNode, key: string): Map<string, TSNode> | undefined {
+    let cur: TSNode | null = n.parent;
+    while (cur) {
+      if (cur.type === "object") {
+        const e = objectEntries(cur);
+        if (e.has(key)) return e;
+      }
+      cur = cur.parent;
+    }
+    return undefined;
+  }
+
+  function literalOf(n: TSNode | undefined): string | undefined {
+    return n ? stringValue(n) : undefined;
+  }
+
+  function lastString(arr: TSNode): string | undefined {
+    for (let i = arr.namedChildren.length - 1; i >= 0; i--) {
+      const c = arr.namedChildren[i];
+      const s = c ? stringValue(c) : undefined;
+      if (s) return s;
+    }
+    return undefined;
   }
 
   function walkRefs(n: TSNode): void {
