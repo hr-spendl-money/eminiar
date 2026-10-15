@@ -268,8 +268,8 @@ function Routes(): JSX.Element {
   if (!q.data.length)
     return (
       <Empty>
-        No routes detected. express/fastify/hono/koa registrations and Next.js route files are
-        recognised.
+        No routes detected. express/fastify/hono/koa/hapi/restify registrations, moleculer service
+        schemas and gateway aliases, and Next.js route files are recognised.
       </Empty>
     );
   return (
